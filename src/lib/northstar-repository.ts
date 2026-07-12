@@ -222,15 +222,15 @@ const sqliteMutex = new AsyncMutex();
 function postgresExecutor(client: Pool | PoolClient): NorthstarQueryExecutor {
   return {
     provider: "postgres",
-    async all<T extends QueryResultRow>(statement: string | NorthstarSql, parameters = []) {
+    async all<T extends QueryResultRow>(statement: string | NorthstarSql, parameters: readonly unknown[] = []): Promise<T[]> {
       const result = await client.query<T>(resolveStatement(statement, "postgres"), [...parameters]);
       return result.rows;
     },
-    async get<T extends QueryResultRow>(statement: string | NorthstarSql, parameters = []) {
+    async get<T extends QueryResultRow>(statement: string | NorthstarSql, parameters: readonly unknown[] = []): Promise<T | null> {
       const result = await client.query<T>(resolveStatement(statement, "postgres"), [...parameters]);
       return result.rows[0] ?? null;
     },
-    async run(statement: string | NorthstarSql, parameters = []) {
+    async run(statement: string | NorthstarSql, parameters: readonly unknown[] = []): Promise<NorthstarRunResult> {
       const result = await client.query(resolveStatement(statement, "postgres"), [...parameters]);
       return { changes: result.rowCount ?? 0, rows: result.rows };
     },
@@ -240,16 +240,16 @@ function postgresExecutor(client: Pool | PoolClient): NorthstarQueryExecutor {
 function unlockedSqliteExecutor(database: Database.Database): NorthstarQueryExecutor {
   return {
     provider: "sqlite",
-    async all<T extends QueryResultRow>(statement: string | NorthstarSql, parameters = []) {
+    async all<T extends QueryResultRow>(statement: string | NorthstarSql, parameters: readonly unknown[] = []): Promise<T[]> {
       return database.prepare(resolveStatement(statement, "sqlite")).all(...parameters) as T[];
     },
-    async get<T extends QueryResultRow>(statement: string | NorthstarSql, parameters = []) {
+    async get<T extends QueryResultRow>(statement: string | NorthstarSql, parameters: readonly unknown[] = []): Promise<T | null> {
       return (
         (database.prepare(resolveStatement(statement, "sqlite")).get(...parameters) as T | undefined) ??
         null
       );
     },
-    async run(statement: string | NorthstarSql, parameters = []) {
+    async run(statement: string | NorthstarSql, parameters: readonly unknown[] = []): Promise<NorthstarRunResult> {
       const result = database.prepare(resolveStatement(statement, "sqlite")).run(...parameters);
       return {
         changes: result.changes,
