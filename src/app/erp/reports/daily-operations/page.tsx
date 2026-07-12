@@ -1,0 +1,2 @@
+import {metrics,nsdb} from "@/lib/northstar";import {PageTitle} from "@/components/Northstar";import ReportForm from "./ReportForm";
+export default function Page(){const reports=nsdb.prepare("SELECT * FROM reports ORDER BY id DESC LIMIT 10").all() as any[];return <div className="ns-page"><PageTitle eyebrow="OPERATIONS REPORTING" title="Daily Operations Report" subtitle="Create, review, and finalize a management-ready operating brief."/><ReportForm metrics={metrics()} reports={reports}/></div>}

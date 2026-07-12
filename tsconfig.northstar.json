@@ -1,0 +1,5 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {"incremental": false},
+  "include": ["next-env.d.ts", "src/lib/northstar.ts", "src/components/Northstar.tsx", "src/app/erp/**/*.ts", "src/app/erp/**/*.tsx", "src/app/api/northstar/**/*.ts", "src/app/login/page.tsx", "src/app/page.tsx"]
+}

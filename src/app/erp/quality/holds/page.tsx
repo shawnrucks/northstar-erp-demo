@@ -1,0 +1,1 @@
+import {records} from "@/lib/northstar";import {PageTitle,RecordTable} from "@/components/Northstar";export default function Page(){return <div className="ns-page"><PageTitle eyebrow="QUALITY" title="Quality Holds" subtitle="Material and customer shipments under controlled hold"/><RecordTable rows={records("type='QUALITY_HOLD'")} base="/erp/quality/holds"/></div>}
