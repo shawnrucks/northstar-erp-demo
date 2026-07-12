@@ -38,7 +38,7 @@ npm run db:seed:postgres
 
 The migration runner uses checksums, transactions, and an advisory lock. The seed is idempotent. A destructive PostgreSQL reset requires both the explicit reset command and `ALLOW_DEMO_RESET=1`.
 
-See [db/README.md](db/README.md) for migration and Railway details.
+See [db/README.md](db/README.md) for migration and Render details.
 
 ## Verification
 
@@ -88,7 +88,7 @@ All seeded accounts use `Demo123!` locally. Set `NORTHSTAR_DEMO_PASSWORD` before
 
 ## Production deployment
 
-`railway.json` is configured for a Railway web service and Railway PostgreSQL:
+`render.yaml` defines a Render Blueprint with a Starter web service and managed PostgreSQL:
 
 - pre-deploy migration and idempotent seed
 - health check at `/api/health`
@@ -98,9 +98,9 @@ All seeded accounts use `Demo123!` locally. Set `NORTHSTAR_DEMO_PASSWORD` before
 Required production variables:
 
 ```text
-DATABASE_URL=${{Postgres.DATABASE_URL}}
-NORTHSTAR_DEMO_PASSWORD=<strong demo password>
-NORTHSTAR_SEED_DATE=<YYYY-MM-DD>
+DATABASE_URL=<Render PostgreSQL private connection string>
+NORTHSTAR_DEMO_PASSWORD=<demo password>
+NORTHSTAR_DEMO_DATE=<YYYY-MM-DD>
 NODE_ENV=production
 HOSTNAME=0.0.0.0
 ```

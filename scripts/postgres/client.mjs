@@ -6,7 +6,7 @@ export function requireDatabaseUrl() {
   const connectionString = process.env.DATABASE_URL?.trim();
   if (!connectionString) {
     throw new Error(
-      "DATABASE_URL is required. On Railway, reference ${{Postgres.DATABASE_URL}} from the web service.",
+      "DATABASE_URL is required. Configure the web service with its PostgreSQL private connection string.",
     );
   }
 
