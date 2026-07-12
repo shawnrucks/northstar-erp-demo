@@ -7,7 +7,7 @@ services:
     repo: https://github.com/shawnrucks/northstar-erp-demo
     branch: main
     autoDeployTrigger: commit
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci --include=dev && npm run build
     preDeployCommand: npm run db:migrate:postgres && npm run db:seed:postgres
     startCommand: node .next/standalone/server.js
     healthCheckPath: /api/health
