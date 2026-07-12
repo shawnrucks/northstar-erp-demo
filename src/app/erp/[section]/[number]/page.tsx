@@ -1,6 +1,188 @@
-import Link from "next/link";import {notFound} from "next/navigation";import {nsdb,record} from "@/lib/northstar";import {Action,Badge,PageTitle} from "@/components/Northstar";
-const money=(n:any)=>Number(n||0).toLocaleString("en-US",{style:"currency",currency:"USD"});
-export default async function Page({params}:{params:Promise<{section:string,number:string}>}){const {section,number}=await params;const r:any=record(decodeURIComponent(number));if(!r)notFound();const d=r.data;const audits=nsdb.prepare("SELECT * FROM audit_events WHERE record_number=? ORDER BY timestamp DESC LIMIT 50").all(r.number) as any[];const comms=nsdb.prepare("SELECT * FROM communications WHERE record_number=? ORDER BY sent_at DESC").all(r.number) as any[];const tasks=nsdb.prepare("SELECT * FROM tasks WHERE record_number=? ORDER BY id DESC").all(r.number) as any[];
- let actions:React.ReactNode=null;if(r.type==="RFQ")actions=<><Action number={r.number} action="requestInfo" label="Request Customer Information" fields={[{name:"recipient",label:"Recipient",value:"laura.bennett@apexmotion.example"},{name:"message",label:"Editable message",type:"textarea",value:"Please provide drawing revision and packaging requirements."}]}/><Action number={r.number} action="updateRfq" label="Record Customer Response" fields={[{name:"drawingRevision",label:"Drawing revision",value:"C"},{name:"packaging",label:"Packaging requirement",value:"25 units per reinforced carton"}]}/></>;if(r.type==="QUOTE")actions=<><Action number={r.number} action="approve" label="Approve Quote"/><Action number={r.number} action="submitQuote" label="Submit to Customer"/></>;if(r.type==="PURCHASE_ORDER")actions=<><Action number={r.number} action="supplierFollowup" label="Send Supplier Follow-up" fields={[{name:"recipient",label:"Supplier contact",value:d.contact},{name:"message",label:"Message",type:"textarea",value:"Please confirm pricing and the required delivery date."},{name:"nextFollowup",label:"Next follow-up date",type:"date"}]}/><Action number={r.number} action="confirmPO" label="Record Confirmation" fields={[{name:"promisedDate",label:"Revised promised date",type:"date"}]}/><Action number={r.number} action="task" label="Create Expedite Task" fields={[{name:"title",label:"Task title",value:"Expedite PO-10482 supplier confirmation"},{name:"assignee",label:"Assigned user",value:"Caleb Wright"},{name:"dueDate",label:"Due date",type:"date"}]}/></>;if(r.type==="SHORTAGE")actions=<><Action number={r.number} action="transfer" label="Create Transfer Request" fields={[{name:"from",label:"From location",value:"Fort Collins Fabrication"},{name:"quantity",label:"Quantity (LB)",value:"2200"}]}/><Action number={r.number} action="task" label="Create Expedite Task" fields={[{name:"title",label:"Task title",value:"Expedite remaining A36 shortage"}]}/><Action number={r.number} action="escalate" label="Escalate Remaining Shortage"/></>;if(r.type==="EXCEPTION")actions=<Action number={r.number} action="updateException" label="Update & Escalate" fields={[{name:"owner",label:"Owner",value:r.owner},{name:"priority",label:"Severity",value:"HIGH"},{name:"productionImpact",label:"Production impact",type:"textarea",value:d.productionImpact},{name:"customerImpact",label:"Customer impact",type:"textarea",value:d.customerImpact},{name:"estimatedCompletion",label:"Estimated completion",type:"date",value:d.estimatedCompletion},{name:"status",label:"Status",value:"ESCALATED"}]}/>;if(r.type==="INVOICE")actions=<><Action number={r.number} action="invoiceHold" label="Place Invoice on Hold"/><Action number={r.number} action="task" label="Request Buyer Review" fields={[{name:"title",label:"Task title",value:"Review price variance on INV-SUM-8821"},{name:"assignee",label:"Assign to",value:"Caleb Wright"}]}/><Action number={r.number} action="creditRequest" label="Request Supplier Credit" fields={[{name:"message",label:"Message",type:"textarea",value:"The invoiced unit price exceeds PO-10482. Please issue a credit for the variance."}]}/></>;
- const calculated=r.type==="QUOTE"?(()=>{const subtotal=d.materialCost+d.outsideProcessing+d.laborHours*d.laborRate+d.machineHours*d.machineRate+d.setupCost+d.toolingCost+d.packagingCost+d.freight;const total=subtotal*(1+d.scrapPct/100)+d.overhead;return {subtotal,total,margin:(d.revenue-total)/d.revenue*100}})():null;const variance=r.type==="INVOICE"?(d.invoiceUnitPrice-d.poUnitPrice)/d.poUnitPrice*100:0;
- return <div className="ns-page"><Link className="ns-back" href={`/erp/${section}`}>← Back to {section.replaceAll("-"," ")}</Link><PageTitle eyebrow={r.type.replaceAll("_"," ")} title={`${r.number} · ${r.title}`} subtitle={`Last updated ${r.updated_at}`} actions={actions}/><div className="ns-record-meta"><div><small>Status</small><Badge>{r.status}</Badge></div><div><small>Owner</small><b>{r.owner}</b></div><div><small>Priority</small><Badge>{r.priority}</Badge></div><div><small>Due date</small><b>{r.due_date||"Not set"}</b></div></div>{r.type==="INVOICE"&&<section className="ns-panel"><div className="ns-panel-head"><h2>Three-way match</h2><Badge>{variance>d.tolerance?"OUTSIDE TOLERANCE":"WITHIN TOLERANCE"}</Badge></div><div className="ns-match"><div><h3>Purchase order</h3><p>PO <b>{d.po}</b></p><p>Ordered quantity <b>{d.quantity} LB</b></p><p>Unit price <b>{money(d.poUnitPrice)}</b></p></div><div><h3>Receipt</h3><p>Receipt <b>{d.receipt}</b></p><p>Received <b>{d.receivedQuantity} LB</b></p><p>Accepted <b>{d.acceptedQuantity} LB</b></p></div><div className="variance"><h3>Invoice</h3><p>Invoiced quantity <b>{d.quantity} LB</b></p><p>Unit price <b>{money(d.invoiceUnitPrice)}</b></p><p>Price variance <b>{variance.toFixed(2)}% (tolerance {d.tolerance}%)</b></p></div></div></section>}{calculated&&<section className="ns-panel"><div className="ns-panel-head"><h2>Quote costing</h2><Badge>{calculated.margin<20?"EXECUTIVE APPROVAL":calculated.margin<30?"SALES MANAGER APPROVAL":"STANDARD"}</Badge></div><div className="ns-costs"><span>Material <b>{money(d.materialCost)}</b></span><span>Outside processing <b>{money(d.outsideProcessing)}</b></span><span>Labor <b>{money(d.laborHours*d.laborRate)}</b></span><span>Machine <b>{money(d.machineHours*d.machineRate)}</b></span><span>Setup & tooling <b>{money(d.setupCost+d.toolingCost)}</b></span><span>Total estimated cost <b>{money(calculated.total)}</b></span><span>Proposed revenue <b>{money(d.revenue)}</b></span><span>Gross margin <b>{calculated.margin.toFixed(1)}%</b></span></div></section>}<div className="ns-detail-grid"><section className="ns-panel"><div className="ns-panel-head"><h2>Record details</h2></div><dl className="ns-details">{Object.entries(d).filter(([,v])=>!Array.isArray(v)&&typeof v!=="object").map(([k,v])=><div key={k}><dt>{k.replace(/([A-Z])/g," $1")}</dt><dd>{String(v||"—")}</dd></div>)}</dl>{d.requirements&&<div className="ns-requirements"><h3>Requirements</h3>{d.requirements.map((x:string)=><p key={x}>✓ {x}</p>)}</div>}{d.missing?.length>0&&<div className="ns-warning"><b>Missing required information</b>{d.missing.map((x:string)=><p key={x}>! {x}</p>)}</div>}{d.transfers?.map((x:any)=><div className="ns-success" key={x.number}>{x.number}: {x.quantity} LB from {x.from} · {x.status}</div>)}</section><aside><section className="ns-panel"><div className="ns-panel-head"><h2>Tasks</h2></div>{tasks.length?tasks.map(t=><p className="ns-feed" key={t.id}><b>{t.number} · {t.title}</b><small>{t.assigned_user} · {t.status}</small></p>):<p className="ns-empty">No tasks recorded.</p>}</section><section className="ns-panel"><div className="ns-panel-head"><h2>Communications</h2></div>{comms.length?comms.map(c=><p className="ns-feed" key={c.id}><b>{c.subject}</b><small>To {c.recipient} · {c.sent_at}</small></p>):<p className="ns-empty">No communications recorded.</p>}</section></aside></div><section className="ns-panel"><div className="ns-panel-head"><h2>Audit history</h2><span>Immutable event log</span></div><table><thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Field</th><th>Previous</th><th>New value</th><th>Note</th></tr></thead><tbody>{audits.map(a=><tr key={a.id}><td>{a.timestamp}</td><td>{a.user}<small>{a.user_role}</small></td><td>{a.action}</td><td>{a.field_changed||"—"}</td><td>{a.previous_value||"—"}</td><td>{a.new_value||"—"}</td><td>{a.note||"—"}</td></tr>)}</tbody></table></section></div>}
+import Link from "next/link";
+import { notFound, redirect } from "next/navigation";
+import { Action, Badge, PageTitle } from "@/components/Northstar";
+import { northstarRepository, northstarSql } from "@/lib/northstar";
+import { getCurrentNorthstarUser } from "@/lib/northstar-auth";
+import { calculateQuote, invoicePriceVariance } from "@/lib/northstar-domain";
+import { authorizeNorthstarRecordAction, canViewNorthstarRecord, type NorthstarRecordAction } from "@/lib/northstar-permissions";
+
+const formatMoney = (value: unknown) => Number(value || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
+const humanize = (value: string) => value.replace(/([A-Z])/g, " $1").replaceAll("_", " ").replace(/^./, (character) => character.toUpperCase());
+
+const routeForRecord = (number: string) => {
+  if (number.startsWith("RFQ-")) return `/erp/rfqs/${number}`;
+  if (number.startsWith("QT-")) return `/erp/quotes/${number}`;
+  if (number.startsWith("SO-")) return `/erp/sales-orders/${number}`;
+  if (number.startsWith("WO-")) return `/erp/work-orders/${number}`;
+  if (number.startsWith("PO-")) return `/erp/purchase-orders/${number}`;
+  if (number.startsWith("MS-")) return `/erp/material-shortages/${number}`;
+  if (number.startsWith("PE-")) return `/erp/production-exceptions/${number}`;
+  if (number.startsWith("INV-")) return `/erp/invoices/${number}`;
+  return `/erp/records/${number}`;
+};
+
+export default async function RecordPage({ params }: { params: Promise<{ section?: string; number: string }> }) {
+  const routeParams = await params;
+  const number = routeParams.number;
+  const section = routeParams.section || "records";
+  const current = await northstarRepository.findRecord(decodeURIComponent(number));
+  if (!current) notFound();
+  const user = await getCurrentNorthstarUser();
+  if (!user) redirect("/login");
+  if (!canViewNorthstarRecord(user, current.type)) redirect("/erp/dashboard");
+
+  const data = current.data;
+  const [audits, communications, tasks, notes] = await Promise.all([
+    northstarRepository.all<Record<string, string | number | null>>(northstarSql({postgres:"SELECT id,timestamp,user_name AS user,user_role,action,field_changed,previous_value,new_value,note FROM audit_events WHERE record_number=$1 ORDER BY timestamp DESC,id DESC LIMIT 100",sqlite:"SELECT * FROM audit_events WHERE record_number=? ORDER BY timestamp DESC,id DESC LIMIT 100"}),[current.number]),
+    northstarRepository.all<Record<string, string | number | null>>(northstarSql({postgres:"SELECT * FROM communications WHERE record_number=$1 ORDER BY sent_at DESC",sqlite:"SELECT * FROM communications WHERE record_number=? ORDER BY sent_at DESC"}),[current.number]),
+    northstarRepository.all<Record<string, string | number | null>>(northstarSql({postgres:"SELECT * FROM tasks WHERE record_number=$1 ORDER BY id DESC",sqlite:"SELECT * FROM tasks WHERE record_number=? ORDER BY id DESC"}),[current.number]),
+    northstarRepository.all<Record<string, string | number | null>>(northstarSql({postgres:"SELECT * FROM notes WHERE record_number=$1 ORDER BY created_at DESC,id DESC",sqlite:"SELECT * FROM notes WHERE record_number=? ORDER BY created_at DESC,id DESC"}),[current.number]),
+  ]);
+  const allowed = (action: NorthstarRecordAction) => authorizeNorthstarRecordAction(user, action, current).allowed;
+
+  const actions: React.ReactNode[] = [];
+  if (allowed("requestInfo")) actions.push(
+    <Action key="requestInfo" number={current.number} action="requestInfo" label="Request Customer Information" fields={[
+      { name: "recipient", label: "Recipient", value: "laura.bennett@apexmotion.example", required: true },
+      { name: "message", label: "Editable message", type: "textarea", value: "Please provide the missing drawing revision and packaging requirements.", required: true },
+    ]} />,
+  );
+  if (allowed("updateRfq")) actions.push(
+    <Action key="updateRfq" number={current.number} action="updateRfq" label="Record Customer Response" fields={[
+      { name: "drawingRevision", label: "Drawing revision", value: "C", required: true },
+      { name: "packaging", label: "Packaging requirement", value: "25 units per reinforced carton", required: true },
+    ]} />,
+  );
+  if (allowed("addCostLine")) actions.push(
+    <Action key="addCostLine" number={current.number} action="addCostLine" label="Add Costing Line" fields={[
+      { name: "category", label: "Category (MATERIAL, LABOR, TOOLING, etc.)", value: "MATERIAL", required: true },
+      { name: "description", label: "Description", value: "A36 steel sheet", required: true },
+      { name: "amount", label: "Amount", type: "number", value: "18750", required: true },
+    ]} />,
+  );
+  if (allowed("createQuote")) actions.push(
+    <Action key="createQuote" number={current.number} action="createQuote" label="Create Quote" fields={[
+      { name: "quoteNumber", label: "Quote number", value: "QT-2026-1047", required: true },
+      { name: "revenue", label: "Proposed revenue", type: "number", value: "88188", required: true },
+    ]} />,
+  );
+  if (allowed("submitApproval")) actions.push(<Action key="submitApproval" number={current.number} action="submitApproval" label="Submit for Approval" />);
+  if (allowed("approve")) actions.push(<Action key="approve" number={current.number} action="approve" label="Approve Quote" />);
+  if (allowed("submitQuote")) actions.push(<Action key="submitQuote" number={current.number} action="submitQuote" label="Submit to Customer" />);
+  if (allowed("supplierFollowup")) actions.push(
+    <Action key="supplierFollowup" number={current.number} action="supplierFollowup" label="Send Supplier Follow-up" fields={[
+      { name: "recipient", label: "Supplier contact", value: String(data.contact || ""), required: true },
+      { name: "message", label: "Message", type: "textarea", value: "Please confirm pricing and the required delivery date.", required: true },
+      { name: "nextFollowup", label: "Next follow-up date", type: "date" },
+    ]} />,
+  );
+  if (allowed("confirmPO")) actions.push(
+    <Action key="confirmPO" number={current.number} action="confirmPO" label="Record Confirmation" fields={[{ name: "promisedDate", label: "Revised promised date", type: "date", required: true }]} />,
+  );
+  if (allowed("transfer")) actions.push(
+    <Action key="transfer" number={current.number} action="transfer" label="Create Transfer Request" fields={[
+      { name: "from", label: "From location", value: "Fort Collins Fabrication", required: true },
+      { name: "quantity", label: "Quantity (LB)", type: "number", value: "2200", required: true },
+    ]} />,
+  );
+  if (allowed("updateShortage")) actions.push(
+    <Action key="updateShortage" number={current.number} action="updateShortage" label="Update Remaining Shortage" fields={[
+      { name: "remainingShortage", label: "Remaining shortage (LB)", type: "number", value: String(data.shortage ?? 1300), required: true },
+      { name: "resolution", label: "Resolution note", type: "textarea", required: true },
+    ]} />,
+  );
+  if (allowed("escalate")) actions.push(<Action key="escalate" number={current.number} action="escalate" label="Escalate Remaining Shortage" tone="danger" />);
+  if (allowed("updateException")) actions.push(
+    <Action key="updateException" number={current.number} action="updateException" label="Update & Escalate" fields={[
+      { name: "owner", label: "Owner", value: current.owner, required: true },
+      { name: "priority", label: "Severity", value: current.priority, required: true },
+      { name: "productionImpact", label: "Production impact", type: "textarea", value: String(data.productionImpact || ""), required: true },
+      { name: "customerImpact", label: "Customer impact", type: "textarea", value: String(data.customerImpact || ""), required: true },
+      { name: "estimatedCompletion", label: "Estimated completion", type: "date", value: String(data.estimatedCompletion || "") },
+      { name: "status", label: "Status", value: "ESCALATED", required: true },
+    ]} />,
+  );
+  if (allowed("includeInReport")) actions.push(<Action key="includeInReport" number={current.number} action="includeInReport" label="Include in Operations Report" />);
+  if (allowed("confirmVariance")) actions.push(
+    <Action key="confirmVariance" number={current.number} action="confirmVariance" label="Confirm Variance Review" fields={[{ name: "note", label: "Review note", type: "textarea", value: "Unit-price variance confirmed against the configured 2% tolerance.", required: true }]} />,
+  );
+  if (allowed("invoiceHold")) actions.push(<Action key="invoiceHold" number={current.number} action="invoiceHold" label="Place Invoice on Hold" tone="danger" />);
+  if (allowed("creditRequest")) actions.push(
+    <Action key="creditRequest" number={current.number} action="creditRequest" label="Request Supplier Credit" fields={[{ name: "message", label: "Message", type: "textarea", value: "The invoiced unit price exceeds PO-10482. Please issue a credit for the variance.", required: true }]} />,
+  );
+  if (allowed("task")) actions.push(
+    <Action key="task" number={current.number} action="task" label={current.type === "EXCEPTION" ? "Create Customer-Service Task" : current.type === "INVOICE" ? "Request Buyer Review" : "Create Expedite Task"} fields={[
+      { name: "title", label: "Task title", value: current.type === "INVOICE" ? `Review price variance on ${current.number}` : `Follow up on ${current.number}`, required: true },
+      { name: "assignee", label: "Assigned user", value: current.type === "EXCEPTION" ? "Elena Torres" : current.owner, required: true },
+      { name: "dueDate", label: "Due date", type: "date" },
+    ]} />,
+  );
+  if (allowed("note")) actions.push(
+    <Action key="note" number={current.number} action="note" label="Add Note" tone="secondary" fields={[{ name: "note", label: "Internal note", type: "textarea", required: true }]} />,
+  );
+
+  const quote = current.type === "QUOTE" ? calculateQuote({
+    materialCost: Number(data.materialCost || 0), outsideProcessing: Number(data.outsideProcessing || 0), laborHours: Number(data.laborHours || 0), laborRate: Number(data.laborRate || 0), machineHours: Number(data.machineHours || 0), machineRate: Number(data.machineRate || 0), setupCost: Number(data.setupCost || 0), toolingCost: Number(data.toolingCost || 0), packagingCost: Number(data.packagingCost || 0), freight: Number(data.freight || 0), scrapPct: Number(data.scrapPct || 0), overhead: Number(data.overhead || 0), revenue: Number(data.revenue || 0),
+  }) : null;
+  const invoiceVariance = current.type === "INVOICE" ? invoicePriceVariance(Number(data.poUnitPrice || 0), Number(data.invoiceUnitPrice || 0), Number(data.tolerance || 0)) : null;
+  const related = Object.entries(data).filter(([key, value]) => /^(rfq|quote|salesOrder|workOrder|po|purchaseOrder)$/.test(key) && typeof value === "string");
+
+  return (
+    <div className="ns-page">
+      <Link className="ns-back" href={`/erp/${section}`}>← Back to {section.replaceAll("-", " ")}</Link>
+      <PageTitle eyebrow={current.type.replaceAll("_", " ")} title={`${current.number} · ${current.title}`} subtitle={`Last updated ${current.updated_at}`} actions={actions} />
+      <div className="ns-record-meta">
+        <div><small>Status</small><Badge>{current.status}</Badge></div>
+        <div><small>Owner</small><b>{current.owner}</b></div>
+        <div><small>Priority</small><Badge>{current.priority}</Badge></div>
+        <div><small>Due date</small><b>{current.due_date || "Not set"}</b></div>
+      </div>
+      <nav className="ns-tabs" aria-label="Record sections">
+        <a href="#overview">Overview</a><a href="#tasks">Tasks</a><a href="#communications">Communications</a><a href="#notes">Notes</a><a href="#audit">Audit History</a>
+      </nav>
+
+      {invoiceVariance && (
+        <section className="ns-panel" aria-labelledby="match-title">
+          <div className="ns-panel-head"><h2 id="match-title">Three-way match</h2><Badge>{invoiceVariance.outsideTolerance ? "OUTSIDE TOLERANCE" : "WITHIN TOLERANCE"}</Badge></div>
+          <div className="ns-match">
+            <div><h3>Purchase order</h3><p>PO <b><Link href={routeForRecord(String(data.po))}>{String(data.po)}</Link></b></p><p>Ordered quantity <b>{String(data.quantity)} LB</b></p><p>Unit price <b>{formatMoney(data.poUnitPrice)}</b></p></div>
+            <div><h3>Receipt</h3><p>Receipt <b>{String(data.receipt)}</b></p><p>Received <b>{String(data.receivedQuantity)} LB</b></p><p>Accepted <b>{String(data.acceptedQuantity)} LB</b></p></div>
+            <div className="variance"><h3>Invoice</h3><p>Invoiced quantity <b>{String(data.quantity)} LB</b></p><p>Unit price <b>{formatMoney(data.invoiceUnitPrice)}</b></p><p>Price variance <b>{invoiceVariance.variancePct.toFixed(2)}% (tolerance {String(data.tolerance)}%)</b></p></div>
+          </div>
+        </section>
+      )}
+
+      {quote && (
+        <section className="ns-panel" aria-labelledby="cost-title">
+          <div className="ns-panel-head"><h2 id="cost-title">Quote costing</h2><Badge>{quote.grossMarginPct < 20 ? "EXECUTIVE APPROVAL" : quote.grossMarginPct < 30 ? "SALES MANAGER APPROVAL" : "STANDARD"}</Badge></div>
+          <div className="ns-costs">
+            <span>Material <b>{formatMoney(data.materialCost)}</b></span><span>Outside processing <b>{formatMoney(data.outsideProcessing)}</b></span><span>Labor <b>{formatMoney(quote.laborCost)}</b></span><span>Machine <b>{formatMoney(quote.machineCost)}</b></span><span>Scrap allowance <b>{formatMoney(quote.scrapCost)}</b></span><span>Total estimated cost <b>{formatMoney(quote.totalCost)}</b></span><span>Proposed revenue <b>{formatMoney(data.revenue)}</b></span><span>Gross margin <b>{quote.grossMarginPct.toFixed(2)}%</b></span>
+          </div>
+        </section>
+      )}
+
+      <div className="ns-detail-grid" id="overview">
+        <section className="ns-panel">
+          <div className="ns-panel-head"><h2>Record details</h2></div>
+          {related.length > 0 && <div className="ns-related"><h3>Related records</h3>{related.map(([key, value]) => <Link key={key} href={routeForRecord(String(value))}><small>{humanize(key)}</small><b>{String(value)} →</b></Link>)}</div>}
+          <dl className="ns-details">{Object.entries(data).filter(([, value]) => !Array.isArray(value) && typeof value !== "object").map(([key, value]) => <div key={key}><dt>{humanize(key)}</dt><dd>{String(value || "—")}</dd></div>)}</dl>
+          {Array.isArray(data.requirements) && <div className="ns-requirements"><h3>Requirements</h3>{data.requirements.map((value: string) => <p key={value}>✓ {value}</p>)}</div>}
+          {Array.isArray(data.missing) && data.missing.length > 0 && <div className="ns-warning"><b>Missing required information</b>{data.missing.map((value: string) => <p key={value}>! {value}</p>)}</div>}
+          {Array.isArray(data.costLines) && data.costLines.length > 0 && <div className="ns-subtable"><h3>RFQ costing lines</h3><table><thead><tr><th>Category</th><th>Description</th><th>Amount</th></tr></thead><tbody>{data.costLines.map((line: Record<string, unknown>) => <tr key={String(line.id)}><td>{String(line.category)}</td><td>{String(line.description)}</td><td>{formatMoney(line.amount)}</td></tr>)}</tbody></table></div>}
+          {current.type === "SHORTAGE" && <div className="ns-subtable"><h3>Inventory by location</h3><table><thead><tr><th>Location</th><th>Available</th><th>Transfer action</th></tr></thead><tbody><tr><td>Denver Manufacturing</td><td>{String(data.denver)} LB</td><td>Primary demand location</td></tr><tr><td>Fort Collins Fabrication</td><td>{String(data.fortCollins)} LB</td><td>Transfer available</td></tr><tr><td>Aurora Distribution</td><td>{String(data.aurora)} LB</td><td>Transfer available</td></tr></tbody></table></div>}
+          {Array.isArray(data.transfers) && data.transfers.map((transfer: Record<string, unknown>) => <div className="ns-success" key={String(transfer.number)}>{String(transfer.number)}: {String(transfer.quantity)} LB from {String(transfer.from)} · {String(transfer.status)}</div>)}
+        </section>
+        <aside>
+          <section className="ns-panel" id="tasks"><div className="ns-panel-head"><h2>Tasks</h2></div>{tasks.length ? tasks.map((task) => <p className="ns-feed" key={String(task.id)}><b>{String(task.number)} · {String(task.title)}</b><small>{String(task.assigned_user)} · {String(task.status)}</small></p>) : <p className="ns-empty">No tasks recorded.</p>}</section>
+          <section className="ns-panel" id="communications"><div className="ns-panel-head"><h2>Communications</h2></div>{communications.length ? communications.map((communication) => <p className="ns-feed" key={String(communication.id)}><b>{String(communication.subject)}</b><small>To {String(communication.recipient)} · {String(communication.sent_at)}</small></p>) : <p className="ns-empty">No communications recorded.</p>}</section>
+          <section className="ns-panel" id="notes"><div className="ns-panel-head"><h2>Notes</h2></div>{notes.length ? notes.map((note) => <p className="ns-feed" key={String(note.id)}><b>{String(note.body)}</b><small>{String(note.created_by)} · {String(note.created_at)}</small></p>) : <p className="ns-empty">No internal notes recorded.</p>}</section>
+        </aside>
+      </div>
+
+      <section className="ns-panel" id="audit">
+        <div className="ns-panel-head"><h2>Audit history</h2><span>Append-only event log</span></div>
+        <table><thead><tr><th>Timestamp</th><th>User</th><th>Action</th><th>Field</th><th>Previous</th><th>New value</th><th>Note</th></tr></thead><tbody>{audits.map((event) => <tr key={String(event.id)}><td>{String(event.timestamp)}</td><td>{String(event.user)}<small>{String(event.user_role)}</small></td><td>{String(event.action)}</td><td>{String(event.field_changed || "—")}</td><td>{String(event.previous_value || "—")}</td><td>{String(event.new_value || "—")}</td><td>{String(event.note || "—")}</td></tr>)}</tbody></table>
+      </section>
+    </div>
+  );
+}

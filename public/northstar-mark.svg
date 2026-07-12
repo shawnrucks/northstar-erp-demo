@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Northstar Industrial Components</title>
+  <rect width="64" height="64" rx="6" fill="#1f6f9f"/>
+  <path d="M17 48V16h8l14 20V16h8v32h-8L25 28v20z" fill="#fff"/>
+</svg>

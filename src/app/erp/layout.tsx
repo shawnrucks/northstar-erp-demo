@@ -1,2 +1,9 @@
-import {cookies} from "next/headers";import {redirect} from "next/navigation";import {NorthstarShell} from "@/components/Northstar";
-export default async function Layout({children}:{children:React.ReactNode}){let user:any=null;try{const raw=(await cookies()).get("ns_user")?.value;if(raw)user=JSON.parse(Buffer.from(raw,"base64url").toString())}catch{}if(!user)redirect("/login");return <NorthstarShell user={user}>{children}</NorthstarShell>}
+import { redirect } from "next/navigation";
+import { NorthstarShell } from "@/components/Northstar";
+import { getCurrentNorthstarUser } from "@/lib/northstar-auth";
+
+export default async function Layout({ children }: { children: React.ReactNode }) {
+  const user = await getCurrentNorthstarUser();
+  if (!user) redirect("/login");
+  return <NorthstarShell user={user}>{children}</NorthstarShell>;
+}

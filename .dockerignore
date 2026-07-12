@@ -1,0 +1,12 @@
+node_modules
+.next
+.git
+.herenow
+data
+.test-data
+playwright-report
+test-results
+coverage
+*.log
+.env*
+deploy

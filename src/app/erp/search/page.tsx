@@ -1,1 +1,21 @@
-import {records} from "@/lib/northstar";import {PageTitle,RecordTable} from "@/components/Northstar";export default async function Page({searchParams}:{searchParams:Promise<{q?:string}>}){const q=(await searchParams).q||"";const rs=records("number LIKE ? OR title LIKE ? OR party LIKE ? OR data LIKE ?",Array(4).fill(`%${q}%`));return <div className="ns-page"><PageTitle title={`Search results for “${q}”`} subtitle={`${rs.length} matching operational records`}/><RecordTable rows={rs} base="/erp/records"/></div>}
+import { PageTitle, RecordTable } from "@/components/Northstar";
+import { northstarRepository } from "@/lib/northstar";
+
+export default async function Page({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>;
+}) {
+  const query = (await searchParams).q?.trim() || "";
+  const results = query ? await northstarRepository.listRecords({ search: query }) : [];
+
+  return (
+    <div className="ns-page">
+      <PageTitle
+        title={`Search results for “${query}”`}
+        subtitle={`${results.length} matching operational records`}
+      />
+      <RecordTable rows={results} base="/erp/records" />
+    </div>
+  );
+}

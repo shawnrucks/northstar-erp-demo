@@ -1,19 +1,758 @@
-import {NextResponse} from "next/server";import {cookies} from "next/headers";import {nsdb,record,audit,metrics} from "@/lib/northstar";
-function user(raw?:string){try{return JSON.parse(Buffer.from(raw||"","base64url").toString())}catch{return null}}
-export async function POST(req:Request){const u=user((await cookies()).get("ns_user")?.value);if(!u)return NextResponse.json({error:"Sign in required"},{status:401});const b=await req.json();const r=record(b.number);if(!r)return NextResponse.json({error:"Record not found"},{status:404});const allowed:any={approve:["ADMIN"],invoiceHold:["ADMIN","ACCOUNTS_PAYABLE"],supplierFollowup:["ADMIN","BUYER"],transfer:["ADMIN","PRODUCTION_PLANNER"],requestInfo:["ADMIN","SALES_COORDINATOR"]};if(allowed[b.action]&&!allowed[b.action].includes(u.role))return NextResponse.json({error:"Your role is not authorized for this action."},{status:403});
- const data={...r.data};let field="status",old:any=r.status,value:any=r.status,note=b.note||"";const tx=nsdb.transaction(()=>{
-  if(b.action==="requestInfo"){nsdb.prepare("INSERT INTO communications(record_number,recipient,sender,subject,body,template,created_by) VALUES(?,?,?,?,?,?,?)").run(r.number,b.recipient||"laura.bennett@apexmotion.example",u.email,"Information required for "+r.number,b.message||"Please provide the missing drawing revision and packaging requirements.","Customer information request",u.name);note="Customer information request sent"}
-  else if(b.action==="updateRfq"){data.drawingRevision=b.drawingRevision;data.packaging=b.packaging;data.missing=[];value="COSTING";nsdb.prepare("UPDATE records SET status=?,data=?,updated_at=CURRENT_TIMESTAMP WHERE number=?").run(value,JSON.stringify(data),r.number)}
-  else if(b.action==="approve"){value="APPROVED";nsdb.prepare("UPDATE records SET status=?,updated_at=CURRENT_TIMESTAMP WHERE number=?").run(value,r.number)}
-  else if(b.action==="submitQuote"){if(r.status!=="APPROVED")throw new Error("This quote cannot be submitted because Sales Manager approval is still required.");value="SUBMITTED";nsdb.prepare("UPDATE records SET status=?,updated_at=CURRENT_TIMESTAMP WHERE number=?").run(value,r.number);nsdb.prepare("INSERT INTO communications(record_number,recipient,sender,subject,body,template,created_by) VALUES(?,?,?,?,?,?,?)").run(r.number,"laura.bennett@apexmotion.example",u.email,"Northstar quotation "+r.number,"Please find Northstar's quotation for your review.","Quote submission",u.name)}
-  else if(b.action==="supplierFollowup"){data.lastFollowup=new Date().toISOString().slice(0,10);data.nextFollowup=b.nextFollowup;nsdb.prepare("UPDATE records SET data=?,updated_at=CURRENT_TIMESTAMP WHERE number=?").run(JSON.stringify(data),r.number);nsdb.prepare("INSERT INTO communications(record_number,recipient,sender,subject,body,template,created_by) VALUES(?,?,?,?,?,?,?)").run(r.number,b.recipient||data.contact,u.email,"Confirmation requested: "+r.number,b.message||"Please confirm pricing and delivery date.","Supplier confirmation follow-up",u.name);field="communication";old="";value="SENT"}
-  else if(b.action==="confirmPO"){data.promisedDate=b.promisedDate;data.confirmation="REVISED_DATE";value="CONFIRMED";nsdb.prepare("UPDATE records SET status=?,data=?,updated_at=CURRENT_TIMESTAMP WHERE number=?").run(value,JSON.stringify(data),r.number)}
-  else if(b.action==="task"){const n=`TASK-${Date.now().toString().slice(-6)}`;nsdb.prepare("INSERT INTO tasks(number,title,record_number,assigned_user,created_by,priority,due_date,note) VALUES(?,?,?,?,?,?,?,?)").run(n,b.title||"Supplier expedite",r.number,b.assignee||r.owner,u.name,b.priority||"HIGH",b.dueDate||null,b.note||"");field="task";old="";value=n}
-  else if(b.action==="transfer"){const n=`TR-${Date.now().toString().slice(-6)}`;data.transfers=[...(data.transfers||[]),{number:n,from:b.from,quantity:Number(b.quantity),status:"SUBMITTED"}];nsdb.prepare("UPDATE records SET data=?,updated_at=CURRENT_TIMESTAMP WHERE number=?").run(JSON.stringify(data),r.number);field="transfer";old="";value=`${n}: ${b.quantity} LB from ${b.from}`}
-  else if(b.action==="escalate"){value="ESCALATED";nsdb.prepare("UPDATE records SET status=?,updated_at=CURRENT_TIMESTAMP WHERE number=?").run(value,r.number)}
-  else if(b.action==="updateException"){data.customerImpact=b.customerImpact;data.productionImpact=b.productionImpact;data.estimatedCompletion=b.estimatedCompletion;value=b.status||r.status;nsdb.prepare("UPDATE records SET status=?,owner=?,priority=?,data=?,updated_at=CURRENT_TIMESTAMP WHERE number=?").run(value,b.owner||r.owner,b.priority||r.priority,JSON.stringify(data),r.number)}
-  else if(b.action==="invoiceHold"){data.hold=true;value="ON_HOLD";nsdb.prepare("UPDATE records SET status=?,data=?,updated_at=CURRENT_TIMESTAMP WHERE number=?").run(value,JSON.stringify(data),r.number)}
-  else if(b.action==="creditRequest"){nsdb.prepare("INSERT INTO communications(record_number,recipient,sender,subject,body,template,created_by) VALUES(?,?,?,?,?,?,?)").run(r.number,"credits@summitsteel.example",u.email,"Credit request for "+r.number,b.message||"Please issue a credit for the unit price variance.","Supplier credit request",u.name);field="communication";old="";value="CREDIT_REQUEST_SENT"}
-  else if(b.action==="note"){field="note";old="";value=note}
-  audit(r.number,u,b.action,field,old,value,note);
- });try{tx()}catch(e:any){return NextResponse.json({error:e.message},{status:400})}return NextResponse.json({ok:true,record:record(b.number),metrics:metrics()})}
+import { NextResponse } from "next/server";
+import {
+  northstarRepository,
+  northstarSql,
+  type NorthstarQueryExecutor,
+  type NorthstarRecord,
+  type NorthstarRecordData,
+} from "@/lib/northstar";
+import {
+  authenticateNorthstarRequest,
+  isJsonRequest,
+  isSameOriginRequest,
+  type NorthstarUser,
+} from "@/lib/northstar-auth";
+import {
+  authorizeNorthstarRecordAction,
+  type NorthstarRecordAction,
+} from "@/lib/northstar-permissions";
+import { invoicePriceVariance, quoteApprovalRequirement } from "@/lib/northstar-domain";
+
+class InvalidActionInput extends Error {}
+
+class ActionHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: 400 | 403 | 404 | 409,
+    readonly code?: string,
+  ) {
+    super(message);
+  }
+}
+
+function text(
+  body: Record<string, unknown>,
+  key: string,
+  options: { required?: boolean; max?: number; fallback?: string } = {},
+) {
+  const value = body[key];
+  if (value == null || value === "") {
+    if (options.required) throw new InvalidActionInput(`${key} is required.`);
+    return options.fallback ?? "";
+  }
+  if (typeof value !== "string") throw new InvalidActionInput(`${key} must be text.`);
+  const trimmed = value.trim();
+  if (options.required && !trimmed) throw new InvalidActionInput(`${key} is required.`);
+  if (trimmed.length > (options.max ?? 2_000)) {
+    throw new InvalidActionInput(`${key} is too long.`);
+  }
+  return trimmed;
+}
+
+function isoDate(body: Record<string, unknown>, key: string, required = false) {
+  const value = text(body, key, { required, max: 10 });
+  if (!value) return "";
+  const parsed = new Date(`${value}T00:00:00Z`);
+  if (
+    !/^\d{4}-\d{2}-\d{2}$/.test(value) ||
+    Number.isNaN(parsed.valueOf()) ||
+    parsed.toISOString().slice(0, 10) !== value
+  ) {
+    throw new InvalidActionInput(`${key} must be a valid date.`);
+  }
+  return value;
+}
+
+function positiveNumber(body: Record<string, unknown>, key: string) {
+  const value = typeof body[key] === "string" ? Number(body[key]) : body[key];
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new InvalidActionInput(`${key} must be a positive number.`);
+  }
+  return value;
+}
+
+function oneOf<T extends string>(
+  body: Record<string, unknown>,
+  key: string,
+  allowed: readonly T[],
+  fallback: T,
+) {
+  const value = text(body, key, { fallback });
+  if (!allowed.includes(value as T)) {
+    throw new InvalidActionInput(`${key} is not an allowed value.`);
+  }
+  return value as T;
+}
+
+function parseData(value: unknown): NorthstarRecordData {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as NorthstarRecordData;
+  }
+  if (typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as NorthstarRecordData)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function normalizeRecord(row: Record<string, unknown>): NorthstarRecord {
+  return {
+    id: Number(row.id),
+    type: String(row.type),
+    number: String(row.number),
+    title: String(row.title),
+    party: String(row.party || ""),
+    status: String(row.status),
+    priority: String(row.priority || "NORMAL"),
+    owner: String(row.owner || ""),
+    due_date: row.due_date == null ? null : String(row.due_date),
+    data: parseData(row.data),
+    updated_at: String(row.updated_at || ""),
+  };
+}
+
+async function findRecord(
+  database: NorthstarQueryExecutor,
+  number: string,
+  lock = false,
+) {
+  const row = await database.get<Record<string, unknown>>(
+    northstarSql({
+      postgres: `SELECT id, type, number, title, party, status, priority, owner,
+                        due_date, data, updated_at
+                   FROM records WHERE number = $1${lock ? " FOR UPDATE" : ""}`,
+      sqlite: `SELECT id, type, number, title, party, status, priority, owner,
+                      due_date, data, updated_at
+                 FROM records WHERE number = ?`,
+    }),
+    [number],
+  );
+  return row ? normalizeRecord(row) : null;
+}
+
+const updateStatusSql = northstarSql({
+  postgres: `UPDATE records
+                SET status = $1, version = version + 1, updated_at = CURRENT_TIMESTAMP
+              WHERE number = $2`,
+  sqlite: `UPDATE records SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE number = ?`,
+});
+
+const updateDataSql = northstarSql({
+  postgres: `UPDATE records
+                SET data = $1::jsonb, version = version + 1, updated_at = CURRENT_TIMESTAMP
+              WHERE number = $2`,
+  sqlite: `UPDATE records SET data = ?, updated_at = CURRENT_TIMESTAMP WHERE number = ?`,
+});
+
+const updateStatusAndDataSql = northstarSql({
+  postgres: `UPDATE records
+                SET status = $1, data = $2::jsonb, version = version + 1,
+                    updated_at = CURRENT_TIMESTAMP
+              WHERE number = $3`,
+  sqlite: `UPDATE records
+              SET status = ?, data = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE number = ?`,
+});
+
+function auditValue(value: unknown) {
+  if (value == null) return null;
+  return typeof value === "string"
+    ? value
+    : typeof value === "object"
+      ? JSON.stringify(value)
+      : String(value);
+}
+
+async function appendAudit(
+  database: NorthstarQueryExecutor,
+  current: NorthstarRecord,
+  user: NorthstarUser,
+  action: string,
+  field: string,
+  oldValue: unknown,
+  newValue: unknown,
+  note: string,
+) {
+  await database.run(
+    northstarSql({
+      postgres: `INSERT INTO audit_events
+        (user_name, user_role, module, record_type, record_number, action,
+         field_changed, previous_value, new_value, note, session_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      sqlite: `INSERT INTO audit_events
+        (user, user_role, module, record_type, record_number, action,
+         field_changed, previous_value, new_value, note, session_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    }),
+    [
+      user.name,
+      user.role,
+      current.type,
+      current.type,
+      current.number,
+      action,
+      field || null,
+      auditValue(oldValue),
+      auditValue(newValue),
+      note || null,
+      user.session || "demo-session",
+    ],
+  );
+}
+
+async function performAction(
+  database: NorthstarQueryExecutor,
+  current: NorthstarRecord,
+  user: NorthstarUser,
+  action: NorthstarRecordAction,
+  input: Record<string, unknown>,
+) {
+  const data = { ...current.data };
+  let field = "status";
+  let oldValue: unknown = current.status;
+  let newValue: unknown = current.status;
+  let note = text(input, "note", { max: 2_000 });
+
+  switch (action) {
+    case "requestInfo": {
+      const recipient = text(input, "recipient", {
+        max: 254,
+        fallback: "laura.bennett@apexmotion.example",
+      });
+      const message = text(input, "message", {
+        max: 5_000,
+        fallback: "Please provide the missing drawing revision and packaging requirements.",
+      });
+      await database.run(
+        northstarSql({
+          postgres: `INSERT INTO communications
+            (record_number, recipient, sender, subject, body, template, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          sqlite: `INSERT INTO communications
+            (record_number, recipient, sender, subject, body, template, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        }),
+        [
+          current.number,
+          recipient,
+          user.email,
+          `Information required for ${current.number}`,
+          message,
+          "Customer information request",
+          user.name,
+        ],
+      );
+      if (current.status !== "MISSING_INFORMATION") {
+        await database.run(updateStatusSql, ["MISSING_INFORMATION", current.number]);
+      }
+      field = "communication";
+      oldValue = "";
+      newValue = "SENT";
+      note = "Customer information request sent";
+      break;
+    }
+    case "updateRfq": {
+      data.drawingRevision = text(input, "drawingRevision", { required: true, max: 50 });
+      data.packaging = text(input, "packaging", { required: true, max: 500 });
+      data.missing = [];
+      newValue = "COSTING";
+      await database.run(updateStatusAndDataSql, [
+        newValue,
+        JSON.stringify(data),
+        current.number,
+      ]);
+      break;
+    }
+    case "approve": {
+      newValue = "APPROVED";
+      await database.run(updateStatusSql, [newValue, current.number]);
+      break;
+    }
+    case "submitQuote": {
+      newValue = "SUBMITTED";
+      await database.run(updateStatusSql, [newValue, current.number]);
+      await database.run(
+        northstarSql({
+          postgres: `INSERT INTO communications
+            (record_number, recipient, sender, subject, body, template, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          sqlite: `INSERT INTO communications
+            (record_number, recipient, sender, subject, body, template, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        }),
+        [
+          current.number,
+          "laura.bennett@apexmotion.example",
+          user.email,
+          `Northstar quotation ${current.number}`,
+          "Please find Northstar's quotation for your review.",
+          "Quote submission",
+          user.name,
+        ],
+      );
+      break;
+    }
+    case "supplierFollowup": {
+      data.lastFollowup = new Date().toISOString().slice(0, 10);
+      data.nextFollowup = isoDate(input, "nextFollowup");
+      const recipient = text(input, "recipient", {
+        max: 254,
+        fallback: typeof data.contact === "string" ? data.contact : "",
+      });
+      if (!recipient) throw new InvalidActionInput("recipient is required.");
+      const message = text(input, "message", {
+        max: 5_000,
+        fallback: "Please confirm pricing and delivery date.",
+      });
+      await database.run(updateDataSql, [JSON.stringify(data), current.number]);
+      await database.run(
+        northstarSql({
+          postgres: `INSERT INTO communications
+            (record_number, recipient, sender, subject, body, template, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          sqlite: `INSERT INTO communications
+            (record_number, recipient, sender, subject, body, template, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        }),
+        [
+          current.number,
+          recipient,
+          user.email,
+          `Confirmation requested: ${current.number}`,
+          message,
+          "Supplier confirmation follow-up",
+          user.name,
+        ],
+      );
+      field = "communication";
+      oldValue = "";
+      newValue = "SENT";
+      break;
+    }
+    case "confirmPO": {
+      data.promisedDate = isoDate(input, "promisedDate", true);
+      data.confirmation = "REVISED_DATE";
+      newValue = "CONFIRMED";
+      await database.run(updateStatusAndDataSql, [
+        newValue,
+        JSON.stringify(data),
+        current.number,
+      ]);
+      break;
+    }
+    case "task": {
+      const taskNumber = `TASK-${Date.now().toString().slice(-6)}`;
+      const title = text(input, "title", { max: 200, fallback: "Supplier expedite" });
+      const assignee = text(input, "assignee", { max: 200, fallback: current.owner });
+      const priority = oneOf(input, "priority", ["NORMAL", "HIGH", "URGENT"] as const, "HIGH");
+      const dueDate = isoDate(input, "dueDate");
+      await database.run(
+        northstarSql({
+          postgres: `INSERT INTO tasks
+            (number, title, record_number, assigned_user, created_by, priority, due_date, note)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          sqlite: `INSERT INTO tasks
+            (number, title, record_number, assigned_user, created_by, priority, due_date, note)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        }),
+        [
+          taskNumber,
+          title,
+          current.number,
+          assignee,
+          user.name,
+          priority,
+          dueDate || null,
+          note,
+        ],
+      );
+      field = "task";
+      oldValue = "";
+      newValue = taskNumber;
+      break;
+    }
+    case "transfer": {
+      const from = text(input, "from", { required: true, max: 200 });
+      const quantity = positiveNumber(input, "quantity");
+      const availableByLocation: Record<string, number> = {
+        "Denver Manufacturing": Number(data.denver || 0),
+        "Fort Collins Fabrication": Number(data.fortCollins || 0),
+        "Aurora Distribution": Number(data.aurora || 0),
+      };
+      if (!(from in availableByLocation)) {
+        throw new InvalidActionInput("from is not an approved inventory location.");
+      }
+      if (quantity > availableByLocation[from]) {
+        throw new InvalidActionInput(`Only ${availableByLocation[from]} LB is available at ${from}.`);
+      }
+      const transferNumber = `TR-${Date.now().toString().slice(-6)}`;
+      data.transfers = [
+        ...(Array.isArray(data.transfers) ? data.transfers : []),
+        { number: transferNumber, from, quantity, status: "SUBMITTED" },
+      ];
+      await database.run(updateDataSql, [JSON.stringify(data), current.number]);
+      field = "transfer";
+      oldValue = "";
+      newValue = `${transferNumber}: ${quantity} LB from ${from}`;
+      break;
+    }
+    case "escalate": {
+      newValue = "ESCALATED";
+      await database.run(updateStatusSql, [newValue, current.number]);
+      break;
+    }
+    case "updateException": {
+      data.customerImpact = text(input, "customerImpact", { max: 2_000 });
+      data.productionImpact = text(input, "productionImpact", { max: 2_000 });
+      data.estimatedCompletion = isoDate(input, "estimatedCompletion");
+      const status = oneOf(
+        input,
+        "status",
+        ["OPEN", "ESCALATED", "RESOLVED"] as const,
+        current.status as "OPEN" | "ESCALATED",
+      );
+      const owner = text(input, "owner", { max: 200, fallback: current.owner });
+      const priority = oneOf(
+        input,
+        "priority",
+        ["NORMAL", "HIGH", "URGENT"] as const,
+        current.priority as "NORMAL" | "HIGH" | "URGENT",
+      );
+      newValue = status;
+      await database.run(
+        northstarSql({
+          postgres: `UPDATE records
+                        SET status = $1, owner = $2, priority = $3, data = $4::jsonb,
+                            version = version + 1, updated_at = CURRENT_TIMESTAMP
+                      WHERE number = $5`,
+          sqlite: `UPDATE records
+                      SET status = ?, owner = ?, priority = ?, data = ?,
+                          updated_at = CURRENT_TIMESTAMP
+                    WHERE number = ?`,
+        }),
+        [status, owner, priority, JSON.stringify(data), current.number],
+      );
+      break;
+    }
+    case "invoiceHold": {
+      data.hold = true;
+      newValue = "ON_HOLD";
+      await database.run(updateStatusAndDataSql, [
+        newValue,
+        JSON.stringify(data),
+        current.number,
+      ]);
+      break;
+    }
+    case "creditRequest": {
+      const message = text(input, "message", {
+        max: 5_000,
+        fallback: "Please issue a credit for the unit price variance.",
+      });
+      await database.run(
+        northstarSql({
+          postgres: `INSERT INTO communications
+            (record_number, recipient, sender, subject, body, template, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          sqlite: `INSERT INTO communications
+            (record_number, recipient, sender, subject, body, template, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        }),
+        [
+          current.number,
+          "credits@summitsteel.example",
+          user.email,
+          `Credit request for ${current.number}`,
+          message,
+          "Supplier credit request",
+          user.name,
+        ],
+      );
+      field = "communication";
+      oldValue = "";
+      newValue = "CREDIT_REQUEST_SENT";
+      break;
+    }
+    case "note": {
+      note = text(input, "note", { required: true, max: 2_000 });
+      await database.run(
+        northstarSql({
+          postgres: `INSERT INTO notes(record_number, body, created_by) VALUES($1, $2, $3)`,
+          sqlite: `INSERT INTO notes(record_number, body, created_by) VALUES(?, ?, ?)`,
+        }),
+        [current.number, note, user.name],
+      );
+      field = "note";
+      oldValue = "";
+      newValue = note;
+      break;
+    }
+    case "addCostLine": {
+      const category = oneOf(
+        input,
+        "category",
+        [
+          "MATERIAL",
+          "OUTSIDE_PROCESSING",
+          "LABOR",
+          "MACHINE",
+          "SETUP",
+          "TOOLING",
+          "PACKAGING",
+          "FREIGHT",
+          "OVERHEAD",
+        ] as const,
+        "MATERIAL",
+      );
+      const description = text(input, "description", { required: true, max: 300 });
+      const amount = positiveNumber(input, "amount");
+      const lines = Array.isArray(data.costLines) ? data.costLines : [];
+      const line = {
+        id: `COST-${Date.now().toString(36).toUpperCase()}`,
+        category,
+        description,
+        amount,
+      };
+      data.costLines = [...lines, line];
+      await database.run(updateDataSql, [JSON.stringify(data), current.number]);
+      field = "costLine";
+      oldValue = "";
+      newValue = `${category}: ${description} ($${amount.toFixed(2)})`;
+      break;
+    }
+    case "createQuote": {
+      const quoteNumber = text(input, "quoteNumber", { required: true, max: 50 }).toUpperCase();
+      if (!/^QT-\d{4}-\d{4,}$/.test(quoteNumber)) {
+        throw new InvalidActionInput("quoteNumber must use the format QT-YYYY-NNNN.");
+      }
+      const revenue = positiveNumber(input, "revenue");
+      const existing = await findRecord(database, quoteNumber, true);
+      if (existing && existing.type !== "QUOTE") {
+        throw new InvalidActionInput("That record number is already in use.");
+      }
+      const costLines = Array.isArray(data.costLines)
+        ? (data.costLines as Array<{ category?: string; amount?: number }>)
+        : [];
+      const sum = (category: string) =>
+        costLines
+          .filter((lineItem) => lineItem.category === category)
+          .reduce((total, lineItem) => total + Number(lineItem.amount || 0), 0);
+      const quoteData = {
+        ...(existing?.data || {}),
+        rfq: current.number,
+        quantity: Number(data.quantity || 0),
+        materialCost: sum("MATERIAL") || Number(existing?.data.materialCost || 0),
+        outsideProcessing:
+          sum("OUTSIDE_PROCESSING") || Number(existing?.data.outsideProcessing || 0),
+        laborHours: Number(existing?.data.laborHours || 0),
+        laborRate: Number(existing?.data.laborRate || 0),
+        machineHours: Number(existing?.data.machineHours || 0),
+        machineRate: Number(existing?.data.machineRate || 0),
+        setupCost: sum("SETUP") || Number(existing?.data.setupCost || 0),
+        toolingCost: sum("TOOLING") || Number(existing?.data.toolingCost || 0),
+        packagingCost: sum("PACKAGING") || Number(existing?.data.packagingCost || 0),
+        freight: sum("FREIGHT") || Number(existing?.data.freight || 0),
+        scrapPct: Number(existing?.data.scrapPct || 0),
+        overhead: sum("OVERHEAD") || Number(existing?.data.overhead || 0),
+        revenue,
+        approval: "PENDING_CALCULATION",
+      };
+      if (existing) {
+        await database.run(
+          northstarSql({
+            postgres: `UPDATE records
+                          SET title = $1, party = $2, status = 'DRAFT', data = $3::jsonb,
+                              version = version + 1, updated_at = CURRENT_TIMESTAMP
+                        WHERE number = $4`,
+            sqlite: `UPDATE records
+                        SET title = ?, party = ?, status = 'DRAFT', data = ?,
+                            updated_at = CURRENT_TIMESTAMP
+                      WHERE number = ?`,
+          }),
+          [
+            `${current.title} quotation`,
+            current.party,
+            JSON.stringify(quoteData),
+            quoteNumber,
+          ],
+        );
+      } else {
+        await database.run(
+          northstarSql({
+            postgres: `INSERT INTO records
+              (type, number, title, party, status, priority, owner, due_date, data)
+              VALUES('QUOTE', $1, $2, $3, 'DRAFT', $4, $5, $6, $7::jsonb)`,
+            sqlite: `INSERT INTO records
+              (type, number, title, party, status, priority, owner, due_date, data)
+              VALUES('QUOTE', ?, ?, ?, 'DRAFT', ?, ?, ?, ?)`,
+          }),
+          [
+            quoteNumber,
+            `${current.title} quotation`,
+            current.party,
+            current.priority,
+            current.owner,
+            current.due_date,
+            JSON.stringify(quoteData),
+          ],
+        );
+      }
+      data.quote = quoteNumber;
+      await database.run(updateDataSql, [JSON.stringify(data), current.number]);
+      field = "quote";
+      oldValue = "";
+      newValue = quoteNumber;
+      break;
+    }
+    case "submitApproval": {
+      const linkedRfq =
+        typeof data.rfq === "string" ? await findRecord(database, data.rfq, false) : null;
+      if (!linkedRfq?.data.drawingRevision) {
+        throw new InvalidActionInput(
+          "A drawing revision is required before approval can be requested.",
+        );
+      }
+      const result = quoteApprovalRequirement({
+        materialCost: Number(data.materialCost || 0),
+        outsideProcessing: Number(data.outsideProcessing || 0),
+        laborHours: Number(data.laborHours || 0),
+        laborRate: Number(data.laborRate || 0),
+        machineHours: Number(data.machineHours || 0),
+        machineRate: Number(data.machineRate || 0),
+        setupCost: Number(data.setupCost || 0),
+        toolingCost: Number(data.toolingCost || 0),
+        packagingCost: Number(data.packagingCost || 0),
+        freight: Number(data.freight || 0),
+        scrapPct: Number(data.scrapPct || 0),
+        overhead: Number(data.overhead || 0),
+        revenue: Number(data.revenue || 0),
+      });
+      data.approval = result.approvals.join(",");
+      data.calculatedMargin = result.grossMarginPct;
+      data.totalEstimatedCost = result.totalCost;
+      newValue = "AWAITING_APPROVAL";
+      await database.run(updateStatusAndDataSql, [
+        newValue,
+        JSON.stringify(data),
+        current.number,
+      ]);
+      break;
+    }
+    case "updateShortage": {
+      const value =
+        typeof input.remainingShortage === "string"
+          ? Number(input.remainingShortage)
+          : input.remainingShortage;
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+        throw new InvalidActionInput("remainingShortage must be zero or a positive number.");
+      }
+      data.shortage = value;
+      data.resolution = text(input, "resolution", { max: 2_000 });
+      await database.run(updateDataSql, [JSON.stringify(data), current.number]);
+      field = "shortageQuantity";
+      oldValue = current.data.shortage;
+      newValue = value;
+      note = String(data.resolution || "");
+      break;
+    }
+    case "includeInReport": {
+      data.includeInNextReport = true;
+      await database.run(updateDataSql, [JSON.stringify(data), current.number]);
+      field = "dailyOperationsReport";
+      oldValue = "NOT_INCLUDED";
+      newValue = "INCLUDE_IN_NEXT_REPORT";
+      break;
+    }
+    case "confirmVariance": {
+      const variance = invoicePriceVariance(
+        Number(data.poUnitPrice || 0),
+        Number(data.invoiceUnitPrice || 0),
+        Number(data.tolerance || 0),
+      );
+      data.varianceConfirmed = true;
+      data.variancePct = variance.variancePct;
+      data.outsideTolerance = variance.outsideTolerance;
+      note = text(input, "note", {
+        max: 2_000,
+        fallback: "Unit-price variance reviewed against configured tolerance.",
+      });
+      await database.run(updateDataSql, [JSON.stringify(data), current.number]);
+      field = "varianceReview";
+      oldValue = "UNCONFIRMED";
+      newValue = variance.outsideTolerance ? "OUTSIDE_TOLERANCE" : "WITHIN_TOLERANCE";
+      break;
+    }
+  }
+
+  await appendAudit(database, current, user, action, field, oldValue, newValue, note);
+}
+
+export async function POST(request: Request) {
+  if (!isSameOriginRequest(request)) {
+    return NextResponse.json({ error: "Cross-site request rejected." }, { status: 403 });
+  }
+  if (!isJsonRequest(request)) {
+    return NextResponse.json({ error: "Content-Type must be application/json." }, { status: 415 });
+  }
+
+  const user = await authenticateNorthstarRequest(request);
+  if (!user) {
+    return NextResponse.json({ error: "Sign in required" }, { status: 401 });
+  }
+
+  let body: unknown;
+  try {
+    body = await request.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return NextResponse.json({ error: "Invalid request body." }, { status: 400 });
+  }
+
+  const input = body as Record<string, unknown>;
+  const number = typeof input.number === "string" ? input.number.trim() : "";
+  if (!number || number.length > 100) {
+    return NextResponse.json({ error: "A valid record number is required." }, { status: 400 });
+  }
+
+  try {
+    await northstarRepository.transaction(async (database) => {
+      const current = await findRecord(database, number, true);
+      if (!current) throw new ActionHttpError("Record not found", 404);
+
+      const authorization = authorizeNorthstarRecordAction(user, input.action, current);
+      if (!authorization.allowed) {
+        throw new ActionHttpError(
+          authorization.message,
+          authorization.status,
+          authorization.code,
+        );
+      }
+
+      await performAction(database, current, user, authorization.action, input);
+    });
+  } catch (error) {
+    if (error instanceof ActionHttpError) {
+      return NextResponse.json(
+        { error: error.message, ...(error.code ? { code: error.code } : {}) },
+        { status: error.status },
+      );
+    }
+    const message = error instanceof Error ? error.message : "The action could not be completed.";
+    return NextResponse.json(
+      { error: message },
+      { status: error instanceof InvalidActionInput ? 400 : 500 },
+    );
+  }
+
+  return NextResponse.json({
+    ok: true,
+    record: await northstarRepository.findRecord(number),
+    metrics: await northstarRepository.getMetrics(),
+  });
+}

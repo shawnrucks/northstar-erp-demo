@@ -1,15 +1,18 @@
 # Northstar Industrial Components ERP Demo
 
-A functional, passive manufacturing ERP demonstration built for browser-driven administrative workflows. Northstar stores queues, records, approvals, exceptions, communications, tasks, reports, and immutable audit history; it contains no internal AI or business-process automation.
+Northstar is a functional manufacturing ERP demonstration for browser-driven administrative workflows. It stores queues, records, approvals, exceptions, communications, tasks, reports, and append-only audit evidence. It contains no internal AI or automatic business-process completion.
 
-## Stack
+## Architecture
 
-- Next.js 16, React 19, TypeScript, and CSS
-- SQLite via `better-sqlite3` (schema uses relational, migration-friendly records)
-- Credentials login with scrypt password hashing and HTTP-only sessions
-- Server-side role checks for primary mutations
+- Next.js 16, React 19, and TypeScript
+- PostgreSQL in production; isolated SQLite fallback for local development and tests
+- Opaque, hashed database sessions in HTTP-only cookies
+- Server-enforced module, record, action, role, and state-transition authorization
+- Transactional workflow mutations and audit events
+- Server-generated daily-operations PDF reports
+- Vitest integration tests and Playwright E2E tests for workflows A–F
 
-## Start locally
+## Local development
 
 ```bash
 npm install
@@ -18,11 +21,45 @@ npm run db:setup
 npm run dev
 ```
 
-Open `http://localhost:3000`. Reset the deterministic demo at any time with `npm run db:reset`. Create a production bundle with `npm run build`, then run it with `npm start`.
+Open `http://localhost:3000`. Reset the deterministic SQLite demo with:
+
+```bash
+npm run db:reset
+```
+
+## PostgreSQL
+
+Set `DATABASE_URL`, then run:
+
+```bash
+npm run db:migrate:postgres
+npm run db:seed:postgres
+```
+
+The migration runner uses checksums, transactions, and an advisory lock. The seed is idempotent. A destructive PostgreSQL reset requires both the explicit reset command and `ALLOW_DEMO_RESET=1`.
+
+See [db/README.md](db/README.md) for migration and Railway details.
+
+## Verification
+
+```bash
+npm run test:unit
+npm run test:e2e
+npm run build
+```
+
+The browser suite exercises authentication, route protection, and all connected workflows:
+
+1. RFQ intake, customer-information request, costing, quote creation, approval, and submission
+2. Supplier PO follow-up, confirmation, expedite task, and note
+3. Inventory transfer request, shortage update, expedite, and escalation
+4. Production exception ownership, customer-service task, and report inclusion
+5. Invoice variance review, hold, buyer review, supplier credit request, and note
+6. Daily report review, issue selection, draft save, finalization, and PDF export
 
 ## Demo accounts
 
-All accounts use password `Demo123!`.
+All seeded accounts use `Demo123!` locally. Set `NORTHSTAR_DEMO_PASSWORD` before production seeding to override it.
 
 | Role | Email |
 |---|---|
@@ -37,31 +74,37 @@ All accounts use password `Demo123!`.
 ## Primary routes
 
 - `/` — public Northstar website
-- `/login` — employee credentials login
-- `/erp/dashboard` — live operational dashboard
-- `/erp/queues` — work queues
-- `/erp/rfqs/RFQ-2026-1047` — missing-information workflow
-- `/erp/quotes/QT-2026-1047` — margin approval and submission
+- `/login` — employee login
+- `/erp/dashboard` — operational dashboard
+- `/erp/queues` — role-aware work queues
+- `/erp/rfqs/RFQ-2026-1047` — RFQ workflow
+- `/erp/quotes/QT-2026-1047` — costing and approval
 - `/erp/purchase-orders/PO-10482` — supplier follow-up
 - `/erp/material-shortages/MS-3021` — transfer and escalation
 - `/erp/production-exceptions/PE-1187` — production exception
 - `/erp/invoices/INV-SUM-8821` — three-way match exception
-- `/erp/reports/daily-operations` — manual report creation and PDF export
-- `/erp/audit-log` — immutable audit history
+- `/erp/reports/daily-operations` — report creation and PDF export
+- `/erp/audit-log` — operational audit history
 
-## Connected demo walkthrough
+## Production deployment
 
-1. Sign in as Sales Coordinator, open `RFQ-2026-1047`, send the customer information request, and record revision C and packaging. Open `QT-2026-1047`; an Administrator can approve it, after which Sales can submit it.
-2. Sign in as Buyer, open the PO Awaiting Confirmation queue, follow up on `PO-10482`, record a promised date, and create an expedite task.
-3. Sign in as Production Planner, open `MS-3021`, create Fort Collins and Aurora transfer requests, create an expedite task, and escalate the remaining shortage. Update `PE-1187` with impact and estimated completion.
-4. Sign in as Accounts Payable, open `INV-SUM-8821`, review the highlighted 7.63% unit-price variance, place it on hold, request buyer review, and request supplier credit.
-5. Sign in as Operations Analyst, create a daily report, review its live metrics, enter narrative and decisions, finalize it, and export the PDF.
-6. Review each record’s audit section or the global audit log for proof of work.
+`railway.json` is configured for a Railway web service and Railway PostgreSQL:
 
-## Environment
+- pre-deploy migration and idempotent seed
+- health check at `/api/health`
+- one shared PostgreSQL system of record
+- Node.js 22
 
-`NORTHSTAR_DATABASE_PATH` selects the SQLite file. `SESSION_SECRET` is reserved for deployment session hardening. Never commit production secrets.
+Required production variables:
 
-## Known limitations
+```text
+DATABASE_URL=${{Postgres.DATABASE_URL}}
+NORTHSTAR_DEMO_PASSWORD=<strong demo password>
+NORTHSTAR_SEED_DATE=<YYYY-MM-DD>
+NODE_ENV=production
+HOSTNAME=0.0.0.0
+```
 
-This is a demonstration ERP, not an accounting, payroll, MRP, EDI, banking, machine-control, CAD, or finite-capacity scheduling system. Communications simulate sending and preserve the exact message; they do not deliver external email. The existing workspace also contains unrelated product demos, which are intentionally preserved.
+## Scope and limitations
+
+This is a demonstration ERP, not a general ledger, payroll system, advanced MRP system, EDI gateway, payment processor, machine-control system, or CAD application. Communications simulate sending and preserve message history; they do not deliver external email. Operational actions require explicit user interaction and never resolve themselves automatically.
