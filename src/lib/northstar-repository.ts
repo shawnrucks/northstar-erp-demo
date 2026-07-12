@@ -1,7 +1,6 @@
 import Database from "better-sqlite3";
 import { existsSync } from "node:fs";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 
 export type NorthstarDatabaseProvider = "postgres" | "sqlite";
@@ -186,12 +185,7 @@ export function getNorthstarSqliteDatabase() {
   const filename =
     process.env.NORTHSTAR_DATABASE_PATH || path.join(process.cwd(), "data", "northstar.sqlite3");
   if (!existsSync(filename)) {
-    const setupScript = path.join(/* turbopackIgnore: true */ process.cwd(), "scripts", "northstar-setup.mjs");
-    execFileSync(process.execPath, [setupScript], {
-      cwd: process.cwd(),
-      env: { ...process.env, NORTHSTAR_DATABASE_PATH: filename },
-      stdio: "ignore",
-    });
+    throw new Error(`Northstar database was not found at ${filename}. Run npm run db:setup before starting the application.`);
   }
   sqliteDatabase = new Database(filename);
   sqliteDatabase.pragma("foreign_keys = ON");
