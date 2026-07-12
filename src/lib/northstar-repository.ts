@@ -1,6 +1,5 @@
 import Database from "better-sqlite3";
 import { existsSync } from "node:fs";
-import path from "node:path";
 import { Pool, type PoolClient, type QueryResultRow } from "pg";
 
 export type NorthstarDatabaseProvider = "postgres" | "sqlite";
@@ -182,8 +181,7 @@ export function getNorthstarSqliteDatabase() {
   }
   if (sqliteDatabase) return sqliteDatabase;
 
-  const filename =
-    process.env.NORTHSTAR_DATABASE_PATH || path.join(process.cwd(), "data", "northstar.sqlite3");
+  const filename = process.env.NORTHSTAR_DATABASE_PATH || "./data/northstar.sqlite3";
   if (!existsSync(filename)) {
     throw new Error(`Northstar database was not found at ${filename}. Run npm run db:setup before starting the application.`);
   }
