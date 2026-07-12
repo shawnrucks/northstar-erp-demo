@@ -184,9 +184,10 @@ export function getNorthstarSqliteDatabase() {
   if (sqliteDatabase) return sqliteDatabase;
 
   const filename =
-    process.env.NORTHSTAR_DATABASE_PATH || path.join(process.cwd(), "data/northstar.sqlite3");
+    process.env.NORTHSTAR_DATABASE_PATH || path.join(process.cwd(), "data", "northstar.sqlite3");
   if (!existsSync(filename)) {
-    execFileSync(process.execPath, [path.join(process.cwd(), "scripts/northstar-setup.mjs")], {
+    const setupScript = path.join(/* turbopackIgnore: true */ process.cwd(), "scripts", "northstar-setup.mjs");
+    execFileSync(process.execPath, [setupScript], {
       cwd: process.cwd(),
       env: { ...process.env, NORTHSTAR_DATABASE_PATH: filename },
       stdio: "ignore",
