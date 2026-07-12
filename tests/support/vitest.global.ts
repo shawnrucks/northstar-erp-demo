@@ -6,7 +6,7 @@ export default function setup() {
   const projectRoot = process.cwd();
   const testRoot = path.join(projectRoot, ".test-data/vitest");
 
-  rmSync(testRoot, { recursive: true, force: true });
+  rmSync(testRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   mkdirSync(testRoot, { recursive: true });
   execFileSync(
     process.execPath,

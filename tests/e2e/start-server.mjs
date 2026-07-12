@@ -7,7 +7,7 @@ const testRoot = path.join(projectRoot, ".test-data/playwright");
 const databasePath = path.join(testRoot, "data/northstar.sqlite3");
 const port = process.env.NORTHSTAR_E2E_PORT || "3100";
 
-rmSync(testRoot, { recursive: true, force: true });
+rmSync(testRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 mkdirSync(testRoot, { recursive: true });
 execFileSync(
   process.execPath,
