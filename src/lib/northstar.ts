@@ -1,8 +1,7 @@
 import type Database from "better-sqlite3";
-import { scryptSync, timingSafeEqual } from "node:crypto";
+import { scrypt, timingSafeEqual } from "node:crypto";
 import {
   getNorthstarSqliteDatabase,
-  northstarRepository,
   type NorthstarRecord,
 } from "@/lib/northstar-repository";
 
@@ -112,13 +111,22 @@ export function metrics() {
   };
 }
 
-export function verify(password: string, stored: string) {
+function deriveScryptKey(password: string, salt: string, length: number) {
+  return new Promise<Buffer>((resolve, reject) => {
+    scrypt(password, salt, length, (error, key) => {
+      if (error) reject(error);
+      else resolve(key);
+    });
+  });
+}
+
+export async function verify(password: string, stored: string) {
   const [salt, encodedKey, extra] = stored.split(":");
   if (extra !== undefined || !salt || !/^[a-f0-9]{128}$/i.test(encodedKey || "")) return false;
 
   try {
     const expected = Buffer.from(encodedKey, "hex");
-    const actual = scryptSync(password, salt, expected.length);
+    const actual = await deriveScryptKey(password, salt, expected.length);
     return expected.length === actual.length && timingSafeEqual(expected, actual);
   } catch {
     return false;

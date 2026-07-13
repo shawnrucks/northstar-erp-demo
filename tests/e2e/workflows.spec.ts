@@ -119,11 +119,19 @@ test.describe.serial("Northstar connected workflows A-F", () => {
     await page.getByLabel("Supply-chain summary").fill("PO-10482 requires supplier recovery.");
     await page.getByLabel("Required management decisions").fill("Caleb owns supplier recovery; Priya owns the transfer plan.");
     await page.getByTestId("operations-report-save-button").click();
-    await expect(page.getByRole("status")).toHaveText("DRAFT");
-    await page.getByRole("button", { name: "Mark Final" }).click();
-    await expect(page.getByRole("status")).toHaveText("FINAL");
+    await expect(page.getByTestId("operations-report-status")).toHaveText("DRAFT");
+    const reportNumber = await page.getByTestId("operations-report-number").textContent();
+    expect(reportNumber).toMatch(/^DOR-/);
+
+    await page.reload();
+    await page.getByTestId(`operations-report-open-${reportNumber!.toLowerCase()}`).click();
+    await expect(page.getByTestId("operations-report-summary")).toHaveValue("A36 supply remains the primary risk to customer commitments.");
+    await expect(page.getByLabel("Include PE-1187")).toBeChecked();
+
+    await page.getByTestId("operations-report-finalize-button").click();
+    await expect(page.getByTestId("operations-report-status")).toHaveText("FINAL");
     const downloadPromise = page.waitForEvent("download");
-    await page.locator(".ns-report-form").getByRole("link", { name: "Export PDF" }).click();
+    await page.getByTestId("operations-report-export-link").click();
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toMatch(/^DOR-.*\.pdf$/);
   });

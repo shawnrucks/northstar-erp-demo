@@ -14,6 +14,65 @@ import {
   type NorthstarCredentialUser,
 } from "@/lib/northstar-auth";
 
+type LoginRateEntry = { count: number; resetAt: number };
+const LOGIN_ATTEMPT_WINDOW_MS = 10 * 60 * 1_000;
+const LOGIN_ATTEMPT_LIMIT = 120;
+const LOGIN_FAILURE_WINDOW_MS = 5 * 60 * 1_000;
+const LOGIN_FAILURE_LIMIT = 20;
+const globalWithLoginRateLimits = globalThis as typeof globalThis & {
+  __northstarLoginRateLimits?: Map<string, LoginRateEntry>;
+};
+const loginRateLimits = globalWithLoginRateLimits.__northstarLoginRateLimits ??= new Map();
+
+function loginAddress(request: Request) {
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  return forwarded || request.headers.get("x-real-ip") || "unknown";
+}
+
+function rateLimitedResponse(entry: LoginRateEntry, message: string) {
+  const now = Date.now();
+  const retryAfter = Math.max(1, Math.ceil((entry.resetAt - now) / 1_000));
+  const response = NextResponse.json(
+    { error: message },
+    { status: 429 },
+  );
+  response.headers.set("retry-after", String(retryAfter));
+  return noStore(response);
+}
+
+function incrementRateLimit(key: string, windowMs: number) {
+  const now = Date.now();
+  const previous = loginRateLimits.get(key);
+  const next = previous && previous.resetAt > now
+    ? { ...previous, count: previous.count + 1 }
+    : { count: 1, resetAt: now + windowMs };
+  loginRateLimits.set(key, next);
+  if (loginRateLimits.size > 5_000) {
+    for (const [key, value] of loginRateLimits) {
+      if (value.resetAt <= now) loginRateLimits.delete(key);
+    }
+  }
+  return next;
+}
+
+function consumeLoginAttempt(address: string) {
+  const entry = incrementRateLimit(`attempt:${address}`, LOGIN_ATTEMPT_WINDOW_MS);
+  return entry.count > LOGIN_ATTEMPT_LIMIT
+    ? rateLimitedResponse(entry, "Too many sign-in attempts. Try again later.")
+    : null;
+}
+
+function blockedByFailures(address: string) {
+  const entry = loginRateLimits.get(`failure:${address}`);
+  return entry && entry.resetAt > Date.now() && entry.count >= LOGIN_FAILURE_LIMIT
+    ? rateLimitedResponse(entry, "Too many unsuccessful sign-in attempts. Try again later.")
+    : null;
+}
+
+function recordLoginFailure(address: string) {
+  incrementRateLimit(`failure:${address}`, LOGIN_FAILURE_WINDOW_MS);
+}
+
 function noStore(response: NextResponse) {
   response.headers.set("cache-control", "no-store");
   return response;
@@ -53,8 +112,12 @@ export async function POST(request: Request) {
   const email = typeof input.email === "string" ? input.email.trim().toLowerCase() : "";
   const password = typeof input.password === "string" ? input.password : "";
   const remember = input.remember === true;
+  const address = loginAddress(request);
+  const rateLimited = consumeLoginAttempt(address) || blockedByFailures(address);
+  if (rateLimited) return rateLimited;
 
   if (!email || email.length > 254 || !password || password.length > 256) {
+    recordLoginFailure(address);
     return noStore(
       NextResponse.json({ error: "Invalid email or password" }, { status: 401 }),
     );
@@ -72,15 +135,28 @@ export async function POST(request: Request) {
     }),
     [email],
   );
-  if (!user || !isNorthstarRole(user.role) || !verify(password, user.password_hash)) {
+  if (!user || !isNorthstarRole(user.role) || !(await verify(password, user.password_hash))) {
+    recordLoginFailure(address);
     return noStore(
       NextResponse.json({ error: "Invalid email or password" }, { status: 401 }),
     );
   }
 
+  loginRateLimits.delete(`failure:${address}`);
+
   // Rotate any existing browser session after a successful authentication.
   await revokeNorthstarSession(northstarSessionToken(request));
-  const session = await createNorthstarSession(user, request, remember);
+  let session: Awaited<ReturnType<typeof createNorthstarSession>>;
+  try {
+    session = await createNorthstarSession(user, request, remember);
+  } catch {
+    return noStore(
+      NextResponse.json(
+        { error: "Sign-in is temporarily unavailable. Please try again." },
+        { status: 503 },
+      ),
+    );
+  }
   try {
     await northstarRepository.appendAuditEvent({
       recordNumber: user.email,

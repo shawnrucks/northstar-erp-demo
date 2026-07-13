@@ -3,6 +3,7 @@ import { PageTitle } from "@/components/Northstar";
 import { redirect } from "next/navigation";
 import { getCurrentNorthstarUser } from "@/lib/northstar-auth";
 import { canViewNorthstarModule } from "@/lib/northstar-permissions";
+import DemoResetPanel from "./DemoResetPanel";
 
 const configuration = [
   ["Users", "7 demo users", "/erp/admin/users"],
@@ -33,11 +34,7 @@ export default async function AdminPage() {
           </Link>
         ))}
       </div>
-      <section className="ns-panel ns-admin-warning">
-        <h2>Demo reset</h2>
-        <p>Resetting restores all connected scenario records, queues, reports, tasks, communications, and audit events to their seeded state. This action is intentionally available only to administrators.</p>
-        <p><code>npm run db:reset</code></p>
-      </section>
+      <DemoResetPanel />
     </div>
   );
 }

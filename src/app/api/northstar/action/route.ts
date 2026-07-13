@@ -16,14 +16,15 @@ import {
   authorizeNorthstarRecordAction,
   type NorthstarRecordAction,
 } from "@/lib/northstar-permissions";
-import { invoicePriceVariance, quoteApprovalRequirement } from "@/lib/northstar-domain";
+import { invoicePriceVariance, missingRfqFields, quoteApprovalRequirement } from "@/lib/northstar-domain";
+import { executeNorthstarMutation } from "@/lib/northstar-mutation-guard";
 
 class InvalidActionInput extends Error {}
 
 class ActionHttpError extends Error {
   constructor(
     message: string,
-    readonly status: 400 | 403 | 404 | 409,
+    readonly status: 400 | 401 | 403 | 404 | 409,
     readonly code?: string,
   ) {
     super(message);
@@ -256,20 +257,109 @@ async function performAction(
       break;
     }
     case "updateRfq": {
+      data.customer = text(input, "customer", { required: true, max: 200 });
+      data.item = text(input, "item", { required: true, max: 100 });
+      data.itemDescription = text(input, "itemDescription", { required: true, max: 300 });
+      data.quantity = positiveNumber(input, "quantity");
+      data.requestedDelivery = isoDate(input, "requestedDelivery", true);
+      data.quoteDueDate = isoDate(input, "quoteDueDate", true);
+      data.material = text(input, "material", { required: true, max: 300 });
+      data.drawingNumber = text(input, "drawingNumber", { required: true, max: 100 });
+      data.assignedEstimator = text(input, "assignedEstimator", { required: true, max: 200 });
       data.drawingRevision = text(input, "drawingRevision", { required: true, max: 50 });
       data.packaging = text(input, "packaging", { required: true, max: 500 });
+      const missing = missingRfqFields(data);
+      if (missing.length > 0) {
+        throw new InvalidActionInput(`RFQ is missing required fields: ${missing.join(", ")}.`);
+      }
       data.missing = [];
       newValue = "COSTING";
+      await database.run(
+        northstarSql({
+          postgres: `UPDATE records
+                        SET status=$1, data=$2::jsonb, party=$3, title=$4, owner=$5,
+                            due_date=$6, version=version+1, updated_at=CURRENT_TIMESTAMP
+                      WHERE number=$7`,
+          sqlite: `UPDATE records
+                      SET status=?, data=?, party=?, title=?, owner=?, due_date=?,
+                          updated_at=CURRENT_TIMESTAMP
+                    WHERE number=?`,
+        }),
+        [
+          newValue,
+          JSON.stringify(data),
+          data.customer,
+          data.itemDescription,
+          data.assignedEstimator,
+          data.quoteDueDate,
+          current.number,
+        ],
+      );
+      break;
+    }
+    case "approve": {
+      const requirements = Array.isArray(data.approvalRequirements)
+        ? data.approvalRequirements.map(String)
+        : String(data.approval || "").split(",").filter(Boolean);
+      const completed = new Set(
+        Array.isArray(data.approvalsCompleted) ? data.approvalsCompleted.map(String) : [],
+      );
+      const commercialRequirements = requirements.filter(
+        (requirement) => requirement !== "PRODUCTION_PLANNER" && requirement !== "NONE",
+      );
+      if (
+        commercialRequirements.length === 0 ||
+        commercialRequirements.every((requirement) => completed.has(requirement))
+      ) {
+        throw new ActionHttpError("Commercial approval is already complete.", 409, "ALREADY_APPROVED");
+      }
+      for (const requirement of requirements) {
+        if (requirement !== "PRODUCTION_PLANNER" && requirement !== "NONE") {
+          completed.add(requirement);
+        }
+      }
+      data.approvalsCompleted = Array.from(completed);
+      const remaining = requirements.filter(
+        (requirement) => requirement !== "NONE" && !completed.has(requirement),
+      );
+      newValue = remaining.length === 0 ? "APPROVED" : "AWAITING_APPROVAL";
       await database.run(updateStatusAndDataSql, [
         newValue,
         JSON.stringify(data),
         current.number,
       ]);
+      field = "approval";
+      oldValue = requirements.join(",") || "PENDING";
+      newValue = remaining.length ? remaining.join(",") : "APPROVED";
       break;
     }
-    case "approve": {
-      newValue = "APPROVED";
-      await database.run(updateStatusSql, [newValue, current.number]);
+    case "plannerApprove": {
+      const requirements = Array.isArray(data.approvalRequirements)
+        ? data.approvalRequirements.map(String)
+        : String(data.approval || "").split(",").filter(Boolean);
+      if (!requirements.includes("PRODUCTION_PLANNER")) {
+        throw new InvalidActionInput("Production-planner approval is not required for this quote.");
+      }
+      const completed = new Set(
+        Array.isArray(data.approvalsCompleted) ? data.approvalsCompleted.map(String) : [],
+      );
+      if (completed.has("PRODUCTION_PLANNER")) {
+        throw new ActionHttpError("Production-planner approval is already complete.", 409, "ALREADY_APPROVED");
+      }
+      completed.add("PRODUCTION_PLANNER");
+      data.approvalsCompleted = Array.from(completed);
+      const remaining = requirements.filter(
+        (requirement) => requirement !== "NONE" && !completed.has(requirement),
+      );
+      const nextStatus = remaining.length === 0 ? "APPROVED" : "AWAITING_APPROVAL";
+      await database.run(updateStatusAndDataSql, [
+        nextStatus,
+        JSON.stringify(data),
+        current.number,
+      ]);
+      field = "approval";
+      oldValue = "PRODUCTION_PLANNER_PENDING";
+      newValue = "PRODUCTION_PLANNER_APPROVED";
       break;
     }
     case "submitQuote": {
@@ -377,6 +467,11 @@ async function performAction(
     }
     case "transfer": {
       const from = text(input, "from", { required: true, max: 200 });
+      const to = text(input, "to", {
+        required: true,
+        max: 200,
+        fallback: "Denver Manufacturing",
+      });
       const quantity = positiveNumber(input, "quantity");
       const availableByLocation: Record<string, number> = {
         "Denver Manufacturing": Number(data.denver || 0),
@@ -386,18 +481,62 @@ async function performAction(
       if (!(from in availableByLocation)) {
         throw new InvalidActionInput("from is not an approved inventory location.");
       }
-      if (quantity > availableByLocation[from]) {
-        throw new InvalidActionInput(`Only ${availableByLocation[from]} LB is available at ${from}.`);
+      if (!(to in availableByLocation) || to === from) {
+        throw new InvalidActionInput("to must be a different approved inventory location.");
       }
+      const inventoryFieldByLocation: Record<string, "denver" | "fortCollins" | "aurora"> = {
+        "Denver Manufacturing": "denver",
+        "Fort Collins Fabrication": "fortCollins",
+        "Aurora Distribution": "aurora",
+      };
+      const sourceField = inventoryFieldByLocation[from];
+      const itemKey = String(data.item || current.title);
+      if (database.provider === "postgres") {
+        await database.run("SELECT pg_advisory_xact_lock(hashtext($1))", [
+          `northstar_inventory_${itemKey}_${from}`,
+        ]);
+      }
+      const shortageRows = await database.all<Record<string, unknown>>(
+        "SELECT data FROM records WHERE type = 'SHORTAGE'",
+      );
+      let reservedAcrossShortages = 0;
+      for (const row of shortageRows) {
+        const shortageData = parseData(row.data);
+        if (String(shortageData.item || "") !== itemKey || !Array.isArray(shortageData.transfers)) {
+          continue;
+        }
+        for (const transfer of shortageData.transfers) {
+          if (
+            transfer &&
+            typeof transfer === "object" &&
+            (transfer as Record<string, unknown>).from === from &&
+            (transfer as Record<string, unknown>).status === "SUBMITTED"
+          ) {
+            reservedAcrossShortages += Number((transfer as Record<string, unknown>).quantity || 0);
+          }
+        }
+      }
+      const currentReservations = (Array.isArray(data.transfers) ? data.transfers : [])
+        .filter((transfer) => transfer && typeof transfer === "object")
+        .map((transfer) => transfer as Record<string, unknown>)
+        .filter((transfer) => transfer.from === from && transfer.status === "SUBMITTED")
+        .reduce((total, transfer) => total + Number(transfer.quantity || 0), 0);
+      const baseAvailability = availableByLocation[from] + currentReservations;
+      const remainingAvailability = Math.max(0, baseAvailability - reservedAcrossShortages);
+      if (quantity > remainingAvailability) {
+        throw new InvalidActionInput(`Only ${remainingAvailability} LB is available at ${from}.`);
+      }
+      data[sourceField] = remainingAvailability - quantity;
+      data.transferReserved = Number(data.transferReserved || 0) + quantity;
       const transferNumber = `TR-${Date.now().toString().slice(-6)}`;
       data.transfers = [
         ...(Array.isArray(data.transfers) ? data.transfers : []),
-        { number: transferNumber, from, quantity, status: "SUBMITTED" },
+        { number: transferNumber, from, to, item: itemKey, quantity, status: "SUBMITTED" },
       ];
       await database.run(updateDataSql, [JSON.stringify(data), current.number]);
       field = "transfer";
       oldValue = "";
-      newValue = `${transferNumber}: ${quantity} LB from ${from}`;
+      newValue = `${transferNumber}: ${quantity} LB from ${from} to ${to}`;
       break;
     }
     case "escalate": {
@@ -530,10 +669,28 @@ async function performAction(
         throw new InvalidActionInput("quoteNumber must use the format QT-YYYY-NNNN.");
       }
       const revenue = positiveNumber(input, "revenue");
+      const leadTimeDays = positiveNumber(input, "leadTimeDays");
+      if (database.provider === "postgres") {
+        await database.run("SELECT pg_advisory_xact_lock(hashtext($1))", [
+          `northstar_quote_${quoteNumber}`,
+        ]);
+      }
       const existing = await findRecord(database, quoteNumber, true);
       if (existing && existing.type !== "QUOTE") {
         throw new InvalidActionInput("That record number is already in use.");
       }
+      if (existing && existing.data.rfq !== current.number) {
+        throw new InvalidActionInput("That quote number belongs to another RFQ.");
+      }
+      if (existing && !["DRAFT", "COSTING", "AWAITING_APPROVAL"].includes(existing.status)) {
+        throw new InvalidActionInput(`Quote ${quoteNumber} can no longer be revised.`);
+      }
+      const itemRecord = typeof data.item === "string"
+        ? await findRecord(database, data.item, false)
+        : null;
+      const standardLeadTimeDays = Number(
+        itemRecord?.data.standardLeadTimeDays || data.standardLeadTimeDays || 30,
+      );
       const costLines = Array.isArray(data.costLines)
         ? (data.costLines as Array<{ category?: string; amount?: number }>)
         : [];
@@ -559,7 +716,11 @@ async function performAction(
         scrapPct: Number(existing?.data.scrapPct || 0),
         overhead: sum("OVERHEAD") || Number(existing?.data.overhead || 0),
         revenue,
+        leadTimeDays,
+        standardLeadTimeDays,
         approval: "PENDING_CALCULATION",
+        approvalRequirements: [],
+        approvalsCompleted: [],
       };
       if (existing) {
         await database.run(
@@ -630,11 +791,21 @@ async function performAction(
         scrapPct: Number(data.scrapPct || 0),
         overhead: Number(data.overhead || 0),
         revenue: Number(data.revenue || 0),
+      }, {
+        leadTimeBelowStandard:
+          Number(data.leadTimeDays || 0) > 0 &&
+          Number(data.standardLeadTimeDays || 0) > 0 &&
+          Number(data.leadTimeDays) < Number(data.standardLeadTimeDays),
+        missingDrawingRevision: !linkedRfq.data.drawingRevision,
       });
       data.approval = result.approvals.join(",");
+      data.approvalRequirements = result.approvals.filter((approval) => approval !== "NONE");
+      data.approvalsCompleted = [];
       data.calculatedMargin = result.grossMarginPct;
       data.totalEstimatedCost = result.totalCost;
-      newValue = "AWAITING_APPROVAL";
+      newValue = result.approvals.every((approval) => approval === "NONE")
+        ? "APPROVED"
+        : "AWAITING_APPROVAL";
       await database.run(updateStatusAndDataSql, [
         newValue,
         JSON.stringify(data),
@@ -704,6 +875,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Sign in required" }, { status: 401 });
   }
 
+  return executeNorthstarMutation(request, user, "record-action", async () => {
+
   let body: unknown;
   try {
     body = await request.json();
@@ -722,6 +895,41 @@ export async function POST(request: Request) {
 
   try {
     await northstarRepository.transaction(async (database) => {
+      if (database.provider === "postgres") {
+        await database.run("SELECT pg_advisory_xact_lock_shared(hashtext($1))", [
+          "northstar_demo_data_v1",
+        ]);
+      }
+      const resetState = await database.get<{ reset_in_progress: boolean | number }>(
+        northstarSql({
+          postgres: "SELECT reset_in_progress FROM demo_state WHERE singleton = true",
+          sqlite: "SELECT reset_in_progress FROM demo_state WHERE singleton = 1",
+        }),
+      );
+      if (resetState?.reset_in_progress === true || Number(resetState?.reset_in_progress) === 1) {
+        throw new ActionHttpError(
+          "Demo data is being reset. Try again after signing in.",
+          409,
+          "DEMO_RESET_IN_PROGRESS",
+        );
+      }
+      const activeSession = await database.get<{ active: number }>(
+        northstarSql({
+          postgres: `SELECT 1 AS active
+                       FROM northstar_sessions
+                      WHERE token_hash LIKE $1
+                        AND revoked_at IS NULL
+                        AND expires_at > now()`,
+          sqlite: `SELECT 1 AS active
+                     FROM northstar_sessions
+                    WHERE token_hash LIKE ?
+                      AND expires_at > strftime('%s','now')`,
+        }),
+        [`${user.session}%`],
+      );
+      if (!activeSession) {
+        throw new ActionHttpError("Your session expired. Sign in again.", 401, "SESSION_EXPIRED");
+      }
       const current = await findRecord(database, number, true);
       if (!current) throw new ActionHttpError("Record not found", 404);
 
@@ -743,16 +951,16 @@ export async function POST(request: Request) {
         { status: error.status },
       );
     }
-    const message = error instanceof Error ? error.message : "The action could not be completed.";
+    if (error instanceof InvalidActionInput) {
+      return NextResponse.json({ error: error.message }, { status: 400 });
+    }
+    console.error("Northstar action failed", error);
     return NextResponse.json(
-      { error: message },
-      { status: error instanceof InvalidActionInput ? 400 : 500 },
+      { error: "The action could not be completed." },
+      { status: 500 },
     );
   }
 
-  return NextResponse.json({
-    ok: true,
-    record: await northstarRepository.findRecord(number),
-    metrics: await northstarRepository.getMetrics(),
+  return NextResponse.json({ ok: true });
   });
 }

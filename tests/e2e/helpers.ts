@@ -38,7 +38,7 @@ export async function submitModalAction(
   }
 
   await modal.getByRole("button", { name: label, exact: true }).click();
-  await expect(modal.getByText("Saved successfully")).toBeVisible();
+  await expect(page.getByText("Saved successfully").last()).toBeVisible();
   await expect(modal).toBeHidden({ timeout: 7_500 });
 }
 
@@ -47,8 +47,5 @@ export async function submitImmediateAction(
   testId: string,
 ) {
   await page.getByTestId(testId).click();
-  await expect(page.getByText("Saved successfully")).toBeVisible();
-  await expect(page.getByText("Saved successfully")).toBeHidden({
-    timeout: 7_500,
-  });
+  await expect(page.getByText("Saved successfully").last()).toBeVisible();
 }

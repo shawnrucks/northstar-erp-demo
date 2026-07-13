@@ -1,4 +1,4 @@
-import { randomBytes, scryptSync } from "node:crypto";
+import { randomBytes, randomUUID, scryptSync } from "node:crypto";
 import { createPostgresClient } from "./client.mjs";
 
 const SEED_VERSION = 1;
@@ -57,9 +57,9 @@ add("INVOICE", "INV-SUM-8821", "Summit Steel Supply invoice", "Summit Steel Supp
 add("QUALITY_HOLD", "QH-4491", "Final inspection documentation missing", "Apex Motion Systems", "QUALITY_HOLD", "HIGH", "Marcus Lee", date(3), { salesOrder: "SO-41882", workOrder: "WO-23891" });
 
 for (let i = 1; i <= 140; i += 1) add("SUPPLIER", `SUP-${String(i).padStart(4, "0")}`, i === 1 ? "Summit Steel Supply" : `Industrial Supplier ${i}`, "", i % 11 === 0 ? "CONDITIONAL" : "APPROVED", i % 8 === 0 ? "HIGH" : "NORMAL", "Caleb Wright", null, { qualityRating: 88 + (i % 10), onTimeRating: 82 + (i % 15) });
-for (let i = 1; i <= 150; i += 1) add("ITEM", i === 1 ? "NS-BR-442" : `NS-${String(i).padStart(4, "0")}`, i === 1 ? "Custom Mounting Bracket" : `Manufactured Component ${i}`, "", "ACTIVE", "NORMAL", "Priya Shah", null, { standardCost: 10 + i * 0.65, onHand: 100 + i * 7 });
+for (let i = 1; i <= 150; i += 1) add("ITEM", i === 1 ? "NS-BR-442" : `NS-${String(i).padStart(4, "0")}`, i === 1 ? "Custom Mounting Bracket" : `Manufactured Component ${i}`, "", "ACTIVE", "NORMAL", "Priya Shah", null, { standardCost: 10 + i * 0.65, standardLeadTimeDays: 30, onHand: 100 + i * 7 });
 for (let i = 1; i <= 74; i += 1) add("RFQ", `RFQ-2026-${i <= 18 ? 1100 + i : 1200 + i}`, `Customer RFQ ${i}`, `Customer ${(i % 12) + 1}`, i < 7 ? "NEW" : i < 11 ? "MISSING_INFORMATION" : "ENGINEERING_REVIEW", i % 4 === 0 ? "HIGH" : "NORMAL", "Elena Torres", date((i % 20) + 1), { quantity: 100 + i * 10 });
-for (let i = 1; i <= 49; i += 1) add("QUOTE", `QT-2026-${1200 + i}`, `Production quote ${i}`, `Customer ${(i % 12) + 1}`, i < 5 ? "AWAITING_APPROVAL" : "DRAFT", "NORMAL", "Elena Torres", date((i % 20) + 3), { quantity: 250, materialCost: 5000, revenue: 9000 });
+for (let i = 1; i <= 49; i += 1) add("QUOTE", `QT-2026-${1200 + i}`, `Production quote ${i}`, `Customer ${(i % 12) + 1}`, i < 5 ? "AWAITING_APPROVAL" : "DRAFT", "NORMAL", "Elena Torres", date((i % 20) + 3), i === 1 ? { quantity: 250, leadTimeDays: 15, standardLeadTimeDays: 30, approval: "PRODUCTION_PLANNER", approvalRequirements: ["PRODUCTION_PLANNER"], approvalsCompleted: [] } : { quantity: 250, materialCost: 5000, revenue: 9000 });
 for (let i = 1; i <= 99; i += 1) add("SALES_ORDER", `SO-${42000 + i}`, `Customer order ${i}`, `Customer ${(i % 12) + 1}`, i < 5 ? "ON_HOLD" : "CONFIRMED", "NORMAL", "Elena Torres", i <= 3 ? date(0) : date((i % 35) + 4), { quantity: 100 + i });
 for (let i = 1; i <= 119; i += 1) add("PURCHASE_ORDER", `PO-${10500 + i}`, `Material order ${i}`, `Industrial Supplier ${(i % 140) + 1}`, i <= 15 ? "PAST_DUE" : i < 20 ? "AWAITING_CONFIRMATION" : "CONFIRMED", i < 4 ? "URGENT" : i <= 15 ? "HIGH" : "NORMAL", "Caleb Wright", i <= 15 ? date(-i) : date((i % 30) + 2), { confirmation: i < 12 || (i >= 16 && i < 27) ? "AWAITING_RESPONSE" : "CONFIRMED", unitCost: 2.5 + i });
 for (let i = 1; i <= 89; i += 1) add("WORK_ORDER", `WO-${24000 + i}`, `Production job ${i}`, `Customer ${(i % 12) + 1}`, i < 5 ? "MATERIAL_PENDING" : i < 9 ? "IN_PROGRESS" : i < 13 ? "MATERIAL_PENDING" : "RELEASED", i < 5 ? "HIGH" : "NORMAL", "Priya Shah", date((i % 28) + 2), {});
@@ -75,48 +75,69 @@ function valuesSql(rowCount, width, firstParameter = 1) {
   return Array.from({ length: rowCount }, (_, row) => `(${Array.from({ length: width }, (__, column) => `$${firstParameter + row * width + column}`).join(",")})`).join(",");
 }
 
-async function insertRecordBatches(client) {
+if (records.length !== 2_090) {
+  throw new Error(`Canonical demo record count is ${records.length}; expected 2090.`);
+}
+
+const relations = [
+  ["CUS-1007", "RFQ-2026-1047", "CUSTOMER_REQUEST"], ["RFQ-2026-1047", "QT-2026-1047", "QUOTED_AS"], ["QT-2026-1047", "SO-41882", "CONVERTED_TO"], ["SO-41882", "WO-23891", "FULFILLED_BY"], ["WO-23891", "PO-10482", "SUPPLIED_BY"], ["PO-10482", "INV-SUM-8821", "BILLED_BY"], ["WO-23891", "MS-3021", "HAS_SHORTAGE"], ["MS-3021", "PE-1187", "CAUSED_EXCEPTION"], ["SO-41882", "QH-4491", "HAS_QUALITY_HOLD"],
+];
+const costLines = [
+  ["MATERIAL", "A36 carbon steel", 1, 18750], ["OUTSIDE_PROCESSING", "Black zinc plating", 1, 6500], ["LABOR", "Direct labor", 220, 42], ["MACHINE", "CNC machine time", 180, 65], ["SETUP", "Production setup", 1, 2400], ["TOOLING", "Dedicated tooling", 1, 4800], ["PACKAGING", "Customer packaging", 1, 1750], ["FREIGHT", "Estimated freight", 1, 1200], ["OVERHEAD", "Applied overhead", 1, 7900],
+];
+
+async function insertRecordBatches(client, table = "records") {
   for (let offset = 0; offset < records.length; offset += 200) {
     const batch = records.slice(offset, offset + 200);
-    const values = batch.flatMap((record) => [record.type, record.number, record.title, record.party, record.status, record.priority, record.owner, record.dueDate, JSON.stringify(record.data)]);
-    await client.query(`INSERT INTO records (type, number, title, party, status, priority, owner, due_date, data) VALUES ${valuesSql(batch.length, 9)}`, values);
+    const values = batch.flatMap((record) => table === "records"
+      ? [record.type, record.number, record.title, record.party, record.status, record.priority, record.owner, record.dueDate, JSON.stringify(record.data)]
+      : [record.number, record.type, record.title, record.party, record.status, record.priority, record.owner, record.dueDate, JSON.stringify(record.data)]);
+    const columns = table === "records"
+      ? "type, number, title, party, status, priority, owner, due_date, data"
+      : "number, type, title, party, status, priority, owner, due_date, data";
+    await client.query(`INSERT INTO ${table} (${columns}) VALUES ${valuesSql(batch.length, 9)}`, values);
   }
 }
 
-const client = createPostgresClient(RESET ? "northstar-reset" : "northstar-seed");
-try {
-  await client.connect();
-  await client.query("BEGIN");
-  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", ["northstar_demo_seed_v1"]);
-
-  if (RESET) {
-    await client.query(`TRUNCATE TABLE northstar_sessions, report_records, reports, tasks, communications, record_cost_lines, record_relations, audit_events, records, users, northstar_meta RESTART IDENTITY CASCADE`);
-  } else {
-    const existingSeed = await client.query("SELECT value FROM northstar_meta WHERE key = 'demo_seed'");
-    if (existingSeed.rowCount > 0) {
-      await client.query("COMMIT");
-      console.log("PostgreSQL demo seed already exists; no data changed.");
-      process.exit(0);
-    }
-    const existingRecords = await client.query("SELECT count(*)::integer AS count FROM records");
-    if (existingRecords.rows[0].count > 0) throw new Error("Refusing to seed a non-empty database without --reset.");
-  }
+async function populateCanonicalTemplates(client) {
+  await client.query("DELETE FROM northstar_demo_cost_line_templates");
+  await client.query("DELETE FROM northstar_demo_relation_templates");
+  await client.query("DELETE FROM northstar_demo_record_templates");
+  await client.query("DELETE FROM northstar_demo_user_templates");
 
   const userValues = people.flatMap(([email, name, role]) => [email, name, role, passwordHash(PASSWORD)]);
-  await client.query(`INSERT INTO users (email, name, role, password_hash) VALUES ${valuesSql(people.length, 4)}`, userValues);
-  await insertRecordBatches(client);
-
-  const relations = [
-    ["CUS-1007", "RFQ-2026-1047", "CUSTOMER_REQUEST"], ["RFQ-2026-1047", "QT-2026-1047", "QUOTED_AS"], ["QT-2026-1047", "SO-41882", "CONVERTED_TO"], ["SO-41882", "WO-23891", "FULFILLED_BY"], ["WO-23891", "PO-10482", "SUPPLIED_BY"], ["PO-10482", "INV-SUM-8821", "BILLED_BY"], ["WO-23891", "MS-3021", "HAS_SHORTAGE"], ["MS-3021", "PE-1187", "CAUSED_EXCEPTION"], ["SO-41882", "QH-4491", "HAS_QUALITY_HOLD"],
-  ];
-  await client.query(`INSERT INTO record_relations (parent_number, child_number, relation_type) VALUES ${valuesSql(relations.length, 3)}`, relations.flat());
-
-  const costLines = [
-    ["MATERIAL", "A36 carbon steel", 1, 18750], ["OUTSIDE_PROCESSING", "Black zinc plating", 1, 6500], ["LABOR", "Direct labor", 220, 42], ["MACHINE", "CNC machine time", 180, 65], ["SETUP", "Production setup", 1, 2400], ["TOOLING", "Dedicated tooling", 1, 4800], ["PACKAGING", "Customer packaging", 1, 1750], ["FREIGHT", "Estimated freight", 1, 1200], ["OVERHEAD", "Applied overhead", 1, 7900],
-  ];
+  await client.query(
+    `INSERT INTO northstar_demo_user_templates (email, name, role, password_hash)
+     VALUES ${valuesSql(people.length, 4)}`,
+    userValues,
+  );
+  await insertRecordBatches(client, "northstar_demo_record_templates");
+  await client.query(
+    `INSERT INTO northstar_demo_relation_templates (parent_number, child_number, relation_type)
+     VALUES ${valuesSql(relations.length, 3)}`,
+    relations.flat(),
+  );
   const costValues = costLines.flatMap(([category, description, quantity, unitCost], index) => ["QT-2026-1047", category, description, quantity, unitCost, index]);
-  await client.query(`INSERT INTO record_cost_lines (record_number, category, description, quantity, unit_cost, sort_order) VALUES ${valuesSql(costLines.length, 6)}`, costValues);
+  await client.query(
+    `INSERT INTO northstar_demo_cost_line_templates
+       (record_number, category, description, quantity, unit_cost, sort_order)
+     VALUES ${valuesSql(costLines.length, 6)}`,
+    costValues,
+  );
+  await client.query(
+    `INSERT INTO demo_state
+       (singleton, seed_version, anchor_date, canonical_record_count, updated_at)
+     VALUES (true, $1, $2, $3, now())
+     ON CONFLICT (singleton) DO UPDATE
+       SET seed_version = EXCLUDED.seed_version,
+           anchor_date = EXCLUDED.anchor_date,
+           canonical_record_count = EXCLUDED.canonical_record_count,
+           updated_at = now()`,
+    [SEED_VERSION, seedDate, records.length],
+  );
+}
 
+async function insertSeedAudit(client) {
   const auditValues = [];
   const modules = ["RFQ", "Purchasing", "Production", "Inventory", "Quality"];
   const storyNumbers = ["RFQ-2026-1047", "QT-2026-1047", "PO-10482", "MS-3021", "PE-1187", "INV-SUM-8821", "QH-4491"];
@@ -129,10 +150,143 @@ try {
     const batchValues = auditValues.slice(offset * width, (offset + 100) * width);
     await client.query(`INSERT INTO audit_events (user_name, user_role, module, record_type, record_number, action, field_changed, previous_value, new_value, note, session_id, metadata) VALUES ${valuesSql(100, width)}`, batchValues);
   }
+}
 
-  await client.query(`INSERT INTO northstar_meta (key, value) VALUES ('demo_seed', $1::jsonb)`, [JSON.stringify({ version: SEED_VERSION, anchorDate: seedDate, recordCount: records.length })]);
+async function copyTemplatesToEmptyLiveTables(client) {
+  await client.query(`INSERT INTO users (email, name, role, password_hash, active, credential_version)
+    SELECT email, name, role, password_hash, active, credential_version
+      FROM northstar_demo_user_templates ORDER BY email`);
+  await client.query(`INSERT INTO records (type, number, title, party, status, priority, owner, due_date, data)
+    SELECT type, number, title, party, status, priority, owner, due_date, data
+      FROM northstar_demo_record_templates ORDER BY number`);
+  await client.query(`INSERT INTO record_relations (parent_number, child_number, relation_type)
+    SELECT parent_number, child_number, relation_type
+      FROM northstar_demo_relation_templates ORDER BY parent_number, child_number, relation_type`);
+  await client.query(`INSERT INTO record_cost_lines (record_number, category, description, quantity, unit_cost, sort_order)
+    SELECT record_number, category, description, quantity, unit_cost, sort_order
+      FROM northstar_demo_cost_line_templates ORDER BY record_number, sort_order`);
+  await insertSeedAudit(client);
+  await client.query(
+    `INSERT INTO northstar_meta (key, value) VALUES ('demo_seed', $1::jsonb)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+    [JSON.stringify({ version: SEED_VERSION, anchorDate: seedDate, recordCount: records.length, generation: 0 })],
+  );
+}
+
+function resetCooldownSeconds() {
+  const requested = Number(process.env.NORTHSTAR_DEMO_RESET_COOLDOWN_SECONDS);
+  if (!Number.isInteger(requested)) return 300;
+  return Math.max(0, Math.min(86_400, requested));
+}
+
+async function reserveCliReset(client, runId, idempotencyKey) {
+  await client.query("BEGIN");
+  try {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", ["northstar_demo_data_v1"]);
+    const stateResult = await client.query(
+      `SELECT reset_in_progress, active_reset_run_id, last_reset_started_at, cooldown_until
+         FROM demo_state WHERE singleton = true FOR UPDATE`,
+    );
+    const state = stateResult.rows[0];
+    if (!state) throw new Error("Canonical demo state is unavailable.");
+    if (state.reset_in_progress) {
+      const stale = state.last_reset_started_at
+        && Date.now() - new Date(state.last_reset_started_at).getTime() > 15 * 60 * 1000;
+      if (!stale) throw new Error("Another demo reset is already running.");
+      await client.query(
+        `UPDATE demo_reset_runs SET status='FAILED', completed_at=now(), error_code='INTERRUPTED'
+          WHERE id=$1 AND status='RUNNING'`,
+        [state.active_reset_run_id],
+      );
+      await client.query(
+        `UPDATE demo_state SET reset_in_progress=false, active_reset_run_id=NULL, updated_at=now()
+          WHERE singleton=true`,
+      );
+    }
+    if (state.cooldown_until && new Date(state.cooldown_until).getTime() > Date.now()) {
+      throw new Error("The demo reset cooldown is still active.");
+    }
+    await client.query(
+      `INSERT INTO demo_reset_runs
+        (id,idempotency_key,status,requested_by,requested_by_role,requested_session,metadata)
+       VALUES($1,$2,'RUNNING','Northstar Deployment','ADMIN','cli-reset',$3::jsonb)`,
+      [runId, idempotencyKey, JSON.stringify({ source: "cli" })],
+    );
+    await client.query(
+      `UPDATE demo_state
+          SET reset_in_progress=true, active_reset_run_id=$1,
+              last_reset_started_at=now(), updated_at=now()
+        WHERE singleton=true`,
+      [runId],
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  }
+}
+
+async function applyCliReset(client, runId) {
+  await client.query("BEGIN");
+  try {
+    await client.query("SELECT set_config('northstar.demo_reset', 'on', true)");
+    const result = await client.query(
+      "SELECT * FROM northstar_apply_demo_templates($1,$2,$3,$4,$5)",
+      [runId, "Northstar Deployment", "ADMIN", "cli-reset", resetCooldownSeconds()],
+    );
+    await client.query("COMMIT");
+    return result.rows[0];
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    await client.query("BEGIN");
+    try {
+      await client.query(
+        `UPDATE demo_reset_runs
+            SET status='FAILED', completed_at=now(), error_code='RESET_FAILED'
+          WHERE id=$1 AND status='RUNNING'`,
+        [runId],
+      );
+      await client.query(
+        `UPDATE demo_state
+            SET reset_in_progress=false, active_reset_run_id=NULL, updated_at=now()
+          WHERE singleton=true AND active_reset_run_id=$1`,
+        [runId],
+      );
+      await client.query("COMMIT");
+    } catch {
+      await client.query("ROLLBACK").catch(() => {});
+    }
+    throw error;
+  }
+}
+
+const client = createPostgresClient(RESET ? "northstar-reset" : "northstar-seed");
+try {
+  await client.connect();
+  await client.query("BEGIN");
+  await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", ["northstar_demo_seed_v1"]);
+  await populateCanonicalTemplates(client);
+
+  const existingSeed = await client.query("SELECT value FROM northstar_meta WHERE key = 'demo_seed'");
+  if (!RESET && existingSeed.rowCount === 0) {
+    const existingRecords = await client.query("SELECT count(*)::integer AS count FROM records");
+    if (existingRecords.rows[0].count > 0) {
+      throw new Error("Refusing to seed a non-empty database without --reset.");
+    }
+    await copyTemplatesToEmptyLiveTables(client);
+  }
   await client.query("COMMIT");
-  console.log(`PostgreSQL demo ${RESET ? "reset" : "seed"} complete: ${records.length} records, ${people.length} users, 300 audit events.`);
+
+  if (RESET) {
+    const runId = randomUUID();
+    await reserveCliReset(client, runId, `cli:${runId}`);
+    const result = await applyCliReset(client, runId);
+    console.log(`PostgreSQL demo reset complete: ${result.restored_record_count} canonical records; audit history retained.`);
+  } else if (existingSeed.rowCount > 0) {
+    console.log(`PostgreSQL demo seed already exists; refreshed ${records.length} canonical reset templates without changing live data.`);
+  } else {
+    console.log(`PostgreSQL demo seed complete: ${records.length} records, ${people.length} users, 300 audit events.`);
+  }
 } catch (error) {
   await client.query("ROLLBACK").catch(() => {});
   console.error("PostgreSQL seed failed:", error instanceof Error ? error.message : error);

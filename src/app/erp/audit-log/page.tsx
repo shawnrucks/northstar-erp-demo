@@ -1,12 +1,15 @@
 import Link from "next/link";
 import { PageTitle } from "@/components/Northstar";
 import { northstarRepository } from "@/lib/northstar";
+import { requireNorthstarModuleAccess } from "@/lib/northstar-guards";
+import { formatNorthstarDateTime } from "@/lib/northstar-format";
 
 export default async function Page({
   searchParams,
 }: {
   searchParams: Promise<{ q?: string; date?: string }>;
 }) {
+  await requireNorthstarModuleAccess("audit-log");
   const { q = "", date = "" } = await searchParams;
   const rows = await northstarRepository.listAuditEvents({
     search: q,
@@ -56,7 +59,7 @@ export default async function Page({
           <tbody>
             {rows.map((row) => (
               <tr key={String(row.id)}>
-                <td>{String(row.timestamp || "")}</td>
+                <td>{formatNorthstarDateTime(row.timestamp as string | number | Date | null)}</td>
                 <td>
                   {String(row.user || "")}
                   <small>{String(row.user_role || "")}</small>

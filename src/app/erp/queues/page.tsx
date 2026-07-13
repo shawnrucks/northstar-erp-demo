@@ -1,22 +1,28 @@
 import Link from "next/link";
 import { PageTitle } from "@/components/Northstar";
 import { northstarRepository } from "@/lib/northstar";
+import { requireNorthstarModuleAccess } from "@/lib/northstar-guards";
+import { canViewNorthstarModule } from "@/lib/northstar-permissions";
 
 export default async function Page() {
+  const user = await requireNorthstarModuleAccess("queues");
   const summary = await northstarRepository.getMetrics();
-  const queues: Array<[string, string, number]> = [
-    ["New RFQs", "new-rfqs", summary.newRfqs],
-    ["RFQ Missing Information", "rfq-missing-information", summary.rfqMissingInformation],
-    ["Quotes Awaiting Approval", "quotes-awaiting-approval", summary.quotes],
-    ["Orders on Hold", "orders-on-hold", summary.holds],
-    ["PO Awaiting Confirmation", "po-awaiting-confirmation", summary.confirmations],
-    ["Past Due POs", "past-due-pos", summary.pastDuePOs],
-    ["Material Shortages", "material-shortages", summary.shortages],
-    ["Work Orders at Risk", "work-orders-at-risk", summary.atRiskWOs],
-    ["Production Exceptions", "production-exceptions", summary.productionExceptions],
-    ["Quality Holds", "quality-holds", summary.quality],
-    ["Invoice Exceptions", "invoice-exceptions", summary.invoices],
+  const allQueues: Array<[string, string, number, string]> = [
+    ["New RFQs", "new-rfqs", summary.newRfqs, "rfqs"],
+    ["RFQ Missing Information", "rfq-missing-information", summary.rfqMissingInformation, "rfqs"],
+    ["Quotes Awaiting Approval", "quotes-awaiting-approval", summary.quotes, "quotes"],
+    ["Orders on Hold", "orders-on-hold", summary.holds, "sales-orders"],
+    ["PO Awaiting Confirmation", "po-awaiting-confirmation", summary.confirmations, "purchase-orders"],
+    ["Purchase Requisitions", "purchase-requisitions", 0, "purchase-orders"],
+    ["Past Due POs", "past-due-pos", summary.pastDuePOs, "purchase-orders"],
+    ["Material Shortages", "material-shortages", summary.shortages, "material-shortages"],
+    ["Work Orders at Risk", "work-orders-at-risk", summary.atRiskWOs, "work-orders"],
+    ["Production Exceptions", "production-exceptions", summary.productionExceptions, "production-exceptions"],
+    ["Customer Updates Required", "customer-updates-required", summary.productionExceptions, "production-exceptions"],
+    ["Quality Holds", "quality-holds", summary.quality, "quality"],
+    ["Invoice Exceptions", "invoice-exceptions", summary.invoices, "invoices"],
   ];
+  const queues = allQueues.filter(([, , , module]) => canViewNorthstarModule(user, module));
 
   return (
     <div className="ns-page">

@@ -37,3 +37,69 @@
 .ns-admin-grid{display:grid;gap:12px;grid-template-columns:repeat(3,1fr)}.ns-admin-card{align-items:center;background:#fff;border:1px solid #dce3e7;display:flex;gap:14px;min-height:105px;padding:18px}.ns-admin-card>span{align-items:center;background:#e6f0f6;color:#2471a0;display:flex;font-size:19px;height:42px;justify-content:center;width:42px}.ns-admin-card>div{flex:1}.ns-admin-card h2{font-size:14px;margin:0}.ns-admin-card p{color:#6c7d87;font-size:11px;line-height:1.5;margin:5px 0 0}.ns-admin-card>b{color:#2673a1;font-size:10px}.ns-admin-warning{margin-top:14px;padding:20px}.ns-admin-warning h2{font-size:15px}.ns-admin-warning p{color:#5f717d;line-height:1.6}.ns-admin-warning code{background:#eef2f4;padding:6px 9px}@media(max-width:1000px){.ns-admin-grid{grid-template-columns:repeat(2,1fr)}}@media(max-width:760px){.ns-admin-grid{grid-template-columns:1fr}}
 .ns-tabs{background:#fff;border:1px solid #dce3e7;display:flex;margin-bottom:14px;overflow-x:auto;padding:0 12px}.ns-tabs a{border-bottom:3px solid transparent;color:#526b7a;font-size:12px;font-weight:700;padding:13px 14px;white-space:nowrap}.ns-tabs a:hover,.ns-tabs a:focus{border-bottom-color:#2776a4;color:#1e628e}.ns-related{background:#edf4f7;display:flex;flex-wrap:wrap;gap:8px;margin:16px;padding:14px}.ns-related h3{font-size:11px;margin:0 0 5px;width:100%}.ns-related a{background:#fff;border:1px solid #cfdae0;display:flex;flex-direction:column;gap:4px;min-width:140px;padding:10px}.ns-related small{color:#6b7d88;font-size:9px}.ns-related b{color:#236e9b;font-size:11px}.ns-subtable{margin:16px}.ns-subtable h3{font-size:12px}.ns-match a{color:#216d9a}
 .ns-narrative-grid{display:grid;gap:0 12px;grid-template-columns:1fr 1fr;padding:0 20px}.ns-narrative-grid label{margin-left:0!important;margin-right:0!important}.ns-narrative-grid textarea{min-height:82px}.ns-report-form input[type=checkbox],.ns-panel input[type=checkbox]{accent-color:#1f6f9f;height:17px;width:17px}@media(max-width:760px){.ns-narrative-grid{grid-template-columns:1fr}.ns-report-form{min-width:0}}
+
+/* Northstar operational legibility and scrollable data tables */
+.ns-shell>aside nav a{font-size:13px;line-height:1.25;padding:10px 12px}
+.ns-nav-group{margin:5px 0 12px}.ns-nav-group>small{color:#718fa1;display:block;font-size:9px;font-weight:800;letter-spacing:.12em;padding:5px 12px;text-transform:uppercase}
+.ns-user b{font-size:12px}.ns-user small,.ns-user button{font-size:10px}
+.ns-shell>main>header input{font-size:14px}
+.ns-queue-shortcut{align-items:center;background:#eef3f5;border-radius:50%;color:#bb4145;display:inline-flex;flex:0 0 auto;height:32px;justify-content:center;width:32px}
+.ns-page-title p{font-size:14px;line-height:1.5}
+.ns-panel-head h2{font-size:16px}.ns-panel-head>a,.ns-panel-head>span{font-size:11px}
+.ns-shell th{font-size:11px;line-height:1.25}.ns-shell td{font-size:13px;line-height:1.4}
+.ns-status-grid span,.ns-report-group span{font-size:12px}.ns-report-group p b{font-size:14px}
+.ns-modal label,.ns-report-form label{font-size:12px}.ns-note{font-size:11px;line-height:1.5}
+.ns-button{align-items:center;font-size:12px;min-height:40px}.ns-back{font-size:12px}
+.ns-details dt{font-size:11px}.ns-details dd{font-size:13px}.ns-feed b{font-size:12px}.ns-feed small{font-size:10px}
+.ns-table-tools input,.ns-table-tools select,.ns-table-tools button{min-height:40px}.ns-table-tools span{font-size:11px}
+.ns-saved>div span,.ns-saved>div strong,.ns-saved>div a{font-size:11px}
+.ns-report-readonly{background:#edf4f7;color:#526c7b;font-size:13px;line-height:1.6;margin:20px;padding:18px}
+.ns-table-card{overflow:hidden}.ns-table-scroll{max-width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.ns-table-scroll:focus-visible{outline:3px solid #62b6e5;outline-offset:-3px}
+.ns-table-hint{display:none}
+.north-hero>div>div a:first-child{background:#2277aa;border-color:#2277aa}
+.north-hero>div>div a:hover,.north-hero>div>div a:focus-visible{background:#2b84b9;border-color:#b8d5e6;outline:3px solid #62b6e5;outline-offset:2px}
+.ns-demo-reset{margin-top:16px;overflow:hidden}.ns-demo-reset-body{padding:20px}.ns-demo-reset-body>p{color:#5f717d;line-height:1.6;max-width:850px}.ns-demo-reset-body>label{display:flex;flex-direction:column;font-size:12px;font-weight:700;gap:7px;margin:16px 0;max-width:560px}.ns-demo-reset-body input{border:1px solid #bdc9d0;min-height:42px;padding:9px}.ns-reset-status{display:grid;gap:10px;grid-template-columns:repeat(4,1fr);margin:18px 0}.ns-reset-status>div{background:#f3f6f8;display:flex;flex-direction:column;padding:13px}.ns-reset-status dt{color:#6b7b85;font-size:10px}.ns-reset-status dd{font-size:13px;font-weight:700;margin:5px 0 0}.ns-reset-ready{color:#217657!important}.ns-reset-unavailable{color:#a8600d!important}.ns-reset-message{align-self:center;color:#526c7b;font-size:12px}.ns-reset-cooldown{background:#fff0d9;color:#82500e!important;padding:10px}@media(max-width:760px){.ns-reset-status{grid-template-columns:1fr 1fr}.ns-demo-reset .ns-form-actions{align-items:stretch;flex-direction:column;margin-left:0;margin-right:0}}
+.ns-state-panel{margin:8vh auto 0;max-width:720px;padding:32px}.ns-state-panel h1{font-family:Georgia,serif;font-size:30px;margin:8px 0}.ns-state-panel>p:not(.ns-eyebrow){color:#5f717d;line-height:1.6}.ns-eyebrow{color:#2874a2;font-size:10px;font-weight:800;letter-spacing:.15em}
+
+/* Use the navigation drawer on tablets as well as phones. */
+@media(max-width:1024px){
+  .north-public>header nav{display:none}
+  .ns-shell{display:block}
+  .ns-shell>aside{box-shadow:8px 0 30px #061b2b55;left:0;pointer-events:none;position:fixed;transform:translateX(-105%);transition:transform .2s ease,visibility .2s;visibility:hidden;width:245px;z-index:40}
+  .ns-shell.mobile-open>aside{left:0;pointer-events:auto;transform:translateX(0);visibility:visible}
+  .ns-menu-button{background:#fff!important;border:1px solid #dbe2e6!important;border-radius:3px!important;display:block!important;font-size:18px!important;height:40px!important;margin-right:10px;width:42px!important}
+  .ns-nav-scrim{background:#071b2b88;border:0;display:block;inset:0;position:fixed;z-index:30}
+  .ns-shell>main>header{padding:0 16px}.ns-shell>main>header form{min-width:0}.ns-shell>main>header input{width:100%}
+  .ns-metrics{grid-template-columns:repeat(2,1fr)}.ns-detail-grid,.ns-report-grid{grid-template-columns:1fr}
+}
+
+@media(max-width:760px){
+  .ns-page{padding:20px 14px 45px}
+  .ns-table-hint{background:#edf4f7;color:#526c7b;display:block;font-size:11px;margin:0;padding:8px 12px}
+  .ns-table-scroll table,.ns-table-card .ns-table-scroll table{min-width:760px}
+  .ns-table-scroll th:first-child{background:#f8f9fa;left:0;position:sticky;z-index:2}
+  .ns-table-scroll td:first-child{background:#fff;box-shadow:1px 0 0 #dce3e7;left:0;position:sticky;z-index:1}
+  .ns-pagination{overflow-x:auto}
+  .ns-saved>div:not(.ns-panel-head){align-items:flex-start;flex-wrap:wrap;gap:7px 14px}.ns-saved>div span{flex-basis:100%}.ns-saved>div strong{margin-left:0}
+}
+
+/* Prevent the public site hero and process steps from overflowing narrow screens. */
+@media(max-width:820px){
+  .north-public,.public-site{overflow-x:hidden}
+  .north-public>header,.public-nav{padding-left:16px;padding-right:16px}
+  .north-public>header>a:last-child{font-size:12px;padding:9px 10px;white-space:nowrap}
+  .north-hero,.hero{grid-template-columns:minmax(0,1fr);min-height:auto}
+  .north-hero>div{min-width:0;padding:56px 20px 48px}
+  .north-hero h1,.hero h1{font-size:clamp(36px,10.5vw,50px);overflow-wrap:anywhere}
+  .north-hero>div>span{font-size:15px}
+  .north-hero>div>div,.hero-actions{align-items:stretch;flex-direction:column}
+  .north-hero button,.north-hero>div>div a,.hero-actions a{max-width:100%;text-align:center;width:100%}
+  .north-hero aside{min-height:250px;padding:34px 20px}
+  .hero{padding:55px 20px}.hero-art{min-width:0}.report-card{max-width:430px;width:100%}.floating-stat{right:0}
+  .trust-row{flex-wrap:wrap}
+  .north-why{gap:35px;grid-template-columns:1fr;padding:65px 20px}.north-locations{flex-wrap:wrap}
+  .north-process>div:last-child{grid-template-columns:1fr}
+  .north-process article{min-height:72px;padding-left:48px}.north-process article b{left:10px}
+  .north-public footer nav{flex-wrap:wrap}
+}

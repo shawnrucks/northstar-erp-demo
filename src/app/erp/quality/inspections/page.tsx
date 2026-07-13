@@ -3,27 +3,27 @@ import { PageTitle, RecordTable } from "@/components/Northstar";
 import { northstarRepository } from "@/lib/northstar";
 import { requireNorthstarModuleAccess } from "@/lib/northstar-guards";
 
-export default async function Page() {
+export default async function InspectionsPage() {
   await requireNorthstarModuleAccess("quality");
-  const holds = await northstarRepository.listRecords({
-    type: "QUALITY_HOLD",
-    status: "QUALITY_HOLD",
+  const rows = await northstarRepository.listRecords({
+    type: "QUALITY_INSPECTION",
+    limit: 500,
   });
 
   return (
     <div className="ns-page">
       <PageTitle
-        eyebrow="QUALITY"
-        title="Quality Holds"
-        subtitle="Material and customer shipments under controlled hold"
+        eyebrow="QUALITY MANAGEMENT"
+        title="Quality Inspections"
+        subtitle="Receiving, in-process, final, and first-article inspection records"
       />
       <nav className="ns-tabs" aria-label="Quality modules">
-        <Link aria-current="page" href="/erp/quality/holds">Holds</Link>
-        <Link href="/erp/quality/inspections">Inspections</Link>
+        <Link href="/erp/quality/holds">Holds</Link>
+        <Link aria-current="page" href="/erp/quality/inspections">Inspections</Link>
         <Link href="/erp/quality/nonconformances">Nonconformances</Link>
         <Link href="/erp/quality/rtv">Returns to Vendor</Link>
       </nav>
-      <RecordTable rows={holds} base="/erp/quality/holds" />
+      <RecordTable rows={rows} base="/erp/quality/inspections" />
     </div>
   );
 }

@@ -309,6 +309,17 @@ function parseRecordData(value: unknown): NorthstarRecordData {
   }
 }
 
+function normalizeDateValue(value: unknown, dateOnly = false) {
+  if (value == null || value === "") return null;
+  if (value instanceof Date && !Number.isNaN(value.valueOf())) {
+    const iso = value.toISOString();
+    return dateOnly ? iso.slice(0, 10) : iso;
+  }
+  const text = String(value);
+  if (dateOnly && /^\d{4}-\d{2}-\d{2}/.test(text)) return text.slice(0, 10);
+  return text;
+}
+
 function normalizeRecord(row: Record<string, unknown>): NorthstarRecord {
   return {
     id: Number(row.id),
@@ -319,9 +330,9 @@ function normalizeRecord(row: Record<string, unknown>): NorthstarRecord {
     status: String(row.status),
     priority: String(row.priority || "NORMAL"),
     owner: String(row.owner || ""),
-    due_date: row.due_date == null ? null : String(row.due_date),
+    due_date: normalizeDateValue(row.due_date, true),
     data: parseRecordData(row.data),
-    updated_at: String(row.updated_at || ""),
+    updated_at: normalizeDateValue(row.updated_at) || "",
   };
 }
 
@@ -458,7 +469,7 @@ function auditValue(value: unknown) {
 
 async function appendAuditEvent(event: AppendAuditEvent) {
   const current = await findRecord(event.recordNumber);
-  const module = event.module || current?.type || "System";
+  const moduleName = event.module || current?.type || "System";
   const recordType = event.recordType || current?.type || "Record";
   await executor().run(
     northstarSql({
@@ -474,7 +485,7 @@ async function appendAuditEvent(event: AppendAuditEvent) {
     [
       event.actor.name,
       event.actor.role,
-      module,
+      moduleName,
       recordType,
       event.recordNumber,
       event.action,

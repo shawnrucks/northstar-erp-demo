@@ -20,6 +20,10 @@ services:
         value: Demo123!
       - key: NORTHSTAR_DEMO_DATE
         value: 2026-07-12
+      - key: NORTHSTAR_OPERATOR_RESET_TOKEN
+        sync: false
+      - key: NORTHSTAR_DEMO_RESET_COOLDOWN_SECONDS
+        value: "300"
       - key: NORTHSTAR_DATABASE_POOL_MAX
         value: "5"
       - key: NODE_ENV

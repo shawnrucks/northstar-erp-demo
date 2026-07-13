@@ -1,6 +1,9 @@
 import Link from "next/link";
 import { Badge, PageTitle } from "@/components/Northstar";
 import { northstarRepository, type NSRecord } from "@/lib/northstar";
+import { requireNorthstarModuleAccess } from "@/lib/northstar-guards";
+import { canViewNorthstarModule, canViewNorthstarRecord, visibleNorthstarRecordTypes } from "@/lib/northstar-permissions";
+import { formatNorthstarDateTime } from "@/lib/northstar-format";
 
 function recordSection(record: NSRecord) {
   if (record.type === "RFQ") return "rfqs";
@@ -12,31 +15,87 @@ function recordSection(record: NSRecord) {
 }
 
 export default async function Dashboard() {
-  const [summary, attention] = await Promise.all([
+  const user = await requireNorthstarModuleAccess("dashboard");
+  const canPlan = canViewNorthstarModule(user, "work-orders");
+  const canPurchase = canViewNorthstarModule(user, "purchase-orders");
+  const canSell = canViewNorthstarModule(user, "sales-orders");
+  const canRfq = canViewNorthstarModule(user, "rfqs");
+  const [summary, attention, workOrders, purchaseOrders, salesOrders, rfqs] = await Promise.all([
     northstarRepository.getMetrics(),
     northstarRepository.listRecords({
-      numbers: [
-        "PO-10482",
-        "WO-23891",
-        "QT-2026-1047",
-        "INV-SUM-8821",
-        "QH-4491",
-        "RFQ-2026-1047",
+      types: visibleNorthstarRecordTypes(user),
+      statuses: [
+        "MISSING_INFORMATION",
+        "AWAITING_APPROVAL",
+        "ON_HOLD",
+        "MATERIAL_PENDING",
+        "AWAITING_CONFIRMATION",
+        "PAST_DUE",
+        "OPEN",
+        "ESCALATED",
+        "QUALITY_HOLD",
+        "PRICE_EXCEPTION",
+        "QUANTITY_EXCEPTION",
+        "MISSING_RECEIPT",
+        "MISSING_PO",
       ],
+      limit: 12,
     }),
+    canPlan ? northstarRepository.listRecords({ type: "WORK_ORDER", limit: 500 }) : [],
+    canPurchase ? northstarRepository.listRecords({ type: "PURCHASE_ORDER", limit: 500 }) : [],
+    canSell ? northstarRepository.listRecords({ type: "SALES_ORDER", limit: 500 }) : [],
+    canRfq ? northstarRepository.listRecords({ type: "RFQ", limit: 500 }) : [],
   ]);
-  const cards: Array<[string, number, string]> = [
-    ["New RFQs", summary.newRfqs, "new-rfqs"],
-    ["Quotes Awaiting Approval", summary.quotes, "quotes-awaiting-approval"],
-    ["Orders on Hold", summary.holds, "orders-on-hold"],
-    ["Material Shortages", summary.shortages, "material-shortages"],
-    ["Purchase Orders Past Due", summary.pastDuePOs, "past-due-pos"],
-    ["Work Orders at Risk", summary.atRiskWOs, "work-orders-at-risk"],
-    ["Quality Holds", summary.quality, "quality-holds"],
-    ["Shipments Due Today", summary.shipments, "shipments-due"],
-    ["Supplier Confirmations Missing", summary.confirmations, "po-awaiting-confirmation"],
-    ["Invoice Exceptions", summary.invoices, "invoice-exceptions"],
+  const today = new Date().toISOString().slice(0, 10);
+  const weekFromToday = new Date(`${today}T00:00:00Z`);
+  weekFromToday.setUTCDate(weekFromToday.getUTCDate() + 7);
+  const weekEnd = weekFromToday.toISOString().slice(0, 10);
+  const dueThisWeek = (dueDate: string | null) => Boolean(dueDate && dueDate >= today && dueDate <= weekEnd);
+  const isClosed = (status: string) => ["COMPLETE", "COMPLETED", "CLOSED", "CANCELLED"].includes(status);
+  const allCards: Array<[string, number, string, string]> = [
+    ["New RFQs", summary.newRfqs, "new-rfqs", "rfqs"],
+    ["Quotes Awaiting Approval", summary.quotes, "quotes-awaiting-approval", "quotes"],
+    ["Orders on Hold", summary.holds, "orders-on-hold", "sales-orders"],
+    ["Material Shortages", summary.shortages, "material-shortages", "material-shortages"],
+    ["Purchase Orders Past Due", summary.pastDuePOs, "past-due-pos", "purchase-orders"],
+    ["Work Orders at Risk", summary.atRiskWOs, "work-orders-at-risk", "work-orders"],
+    ["Quality Holds", summary.quality, "quality-holds", "quality"],
+    ["Shipments Due Today", summary.shipments, "shipments-due", "shipping"],
+    ["Supplier Confirmations Missing", summary.confirmations, "po-awaiting-confirmation", "purchase-orders"],
+    ["Invoice Exceptions", summary.invoices, "invoice-exceptions", "invoices"],
   ];
+  const cards = allCards.filter(([, , , module]) => canViewNorthstarModule(user, module));
+  const visibleAttention = attention.filter((record) => canViewNorthstarRecord(user, record.type));
+  const statusSections: Array<{ title: string; rows: Array<[string, number]> }> = [];
+  if (canPlan) statusSections.push({
+    title: "Production status",
+    rows: [
+      ["Scheduled today", workOrders.filter((record) => record.due_date === today).length],
+      ["Started", workOrders.filter((record) => record.status === "IN_PROGRESS").length],
+      ["Completed", workOrders.filter((record) => isClosed(record.status)).length],
+      ["Behind schedule", workOrders.filter((record) => Boolean(record.due_date && record.due_date < today) && !isClosed(record.status)).length],
+      ["Waiting for material", workOrders.filter((record) => record.status === "MATERIAL_PENDING").length],
+    ],
+  });
+  if (canPurchase) statusSections.push({
+    title: "Supply-chain status",
+    rows: [
+      ["POs due this week", purchaseOrders.filter((record) => dueThisWeek(record.due_date)).length],
+      ["POs overdue", purchaseOrders.filter((record) => record.status === "PAST_DUE").length],
+      ["Missing confirmation", purchaseOrders.filter((record) => record.data.confirmation === "AWAITING_RESPONSE").length],
+      ["Material shortages", summary.shortages],
+      ["Expedite requests", purchaseOrders.filter((record) => record.priority === "URGENT").length],
+    ],
+  });
+  if (canSell || canRfq) statusSections.push({
+    title: "Customer commitments",
+    rows: [
+      ["Orders due this week", salesOrders.filter((record) => dueThisWeek(record.due_date)).length],
+      ["Orders at risk", salesOrders.filter((record) => ["ON_HOLD", "MATERIAL_PENDING"].includes(record.status)).length],
+      ["Late orders", salesOrders.filter((record) => Boolean(record.due_date && record.due_date < today) && !isClosed(record.status)).length],
+      ["Waiting for response", rfqs.filter((record) => record.status === "MISSING_INFORMATION").length],
+    ],
+  });
 
   return (
     <div className="ns-page">
@@ -44,7 +103,7 @@ export default async function Dashboard() {
         eyebrow="OPERATIONS COMMAND CENTER"
         title="Manufacturing operations overview"
         subtitle="Live workload and exception status across Northstar facilities."
-        actions={<span className="ns-live">● LIVE DATABASE</span>}
+        actions={<span className="ns-live">● LIVE DATABASE · Refreshed {formatNorthstarDateTime(new Date())}</span>}
       />
       <div className="ns-metrics">
         {cards.map(([label, count, slug], index) => (
@@ -57,35 +116,12 @@ export default async function Dashboard() {
         ))}
       </div>
       <div className="ns-status-grid">
-        <section>
-          <h2>Production status</h2>
-          {[
-            ["Scheduled today", 12],
-            ["Started", 8],
-            ["Completed", 5],
-            ["Behind schedule", 4],
-            ["Waiting for material", summary.atRiskWOs],
-          ].map(([label, count]) => <p key={label}><span>{label}</span><b>{count}</b></p>)}
-        </section>
-        <section>
-          <h2>Supply-chain status</h2>
-          {[
-            ["POs due this week", 22],
-            ["POs overdue", summary.pastDuePOs],
-            ["Missing confirmation", summary.confirmations],
-            ["Material shortages", summary.shortages],
-            ["Expedite requests", 3],
-          ].map(([label, count]) => <p key={label}><span>{label}</span><b>{count}</b></p>)}
-        </section>
-        <section>
-          <h2>Customer commitments</h2>
-          {[
-            ["Orders due this week", 14],
-            ["Orders at risk", 6],
-            ["Late orders", 2],
-            ["Waiting for response", 4],
-          ].map(([label, count]) => <p key={label}><span>{label}</span><b>{count}</b></p>)}
-        </section>
+        {statusSections.map((section) => (
+          <section key={section.title}>
+            <h2>{section.title}</h2>
+            {section.rows.map(([label, count]) => <p key={label}><span>{label}</span><b>{count}</b></p>)}
+          </section>
+        ))}
       </div>
       <section className="ns-panel">
         <div className="ns-panel-head">
@@ -106,7 +142,7 @@ export default async function Dashboard() {
             </tr>
           </thead>
           <tbody>
-            {attention.map((row) => (
+            {visibleAttention.map((row) => (
               <tr key={row.number}>
                 <td><Badge>{row.priority}</Badge></td>
                 <td>{row.type.replaceAll("_", " ")}</td>

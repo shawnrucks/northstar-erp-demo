@@ -7,6 +7,7 @@ export const NORTHSTAR_RECORD_ACTIONS = [
   "createQuote",
   "submitApproval",
   "approve",
+  "plannerApprove",
   "submitQuote",
   "supplierFollowup",
   "confirmPO",
@@ -30,17 +31,18 @@ const MODULE_ROLES: Record<string, readonly NorthstarRole[]> = {
   customers: ["ADMIN", "SALES_COORDINATOR", "OPERATIONS_ANALYST"],
   rfqs: ["ADMIN", "SALES_COORDINATOR", "OPERATIONS_ANALYST"],
   quotes: ["ADMIN", "SALES_COORDINATOR", "OPERATIONS_ANALYST"],
+  "quote-approvals": ["ADMIN", "PRODUCTION_PLANNER"],
   "sales-orders": ["ADMIN", "SALES_COORDINATOR", "OPERATIONS_ANALYST"],
   "production-planning": ["ADMIN", "PRODUCTION_PLANNER", "OPERATIONS_ANALYST"],
-  "work-orders": ["ADMIN", "PRODUCTION_PLANNER", "OPERATIONS_ANALYST", "QUALITY_SPECIALIST"],
-  "material-shortages": ["ADMIN", "BUYER", "PRODUCTION_PLANNER", "OPERATIONS_ANALYST"],
+  "work-orders": ["ADMIN", "PRODUCTION_PLANNER", "OPERATIONS_ANALYST"],
+  "material-shortages": ["ADMIN", "PRODUCTION_PLANNER", "OPERATIONS_ANALYST"],
   "production-exceptions": ["ADMIN", "PRODUCTION_PLANNER", "OPERATIONS_ANALYST"],
-  "purchase-orders": ["ADMIN", "BUYER", "PRODUCTION_PLANNER", "OPERATIONS_ANALYST", "ACCOUNTS_PAYABLE"],
-  suppliers: ["ADMIN", "BUYER", "OPERATIONS_ANALYST", "ACCOUNTS_PAYABLE", "QUALITY_SPECIALIST"],
-  inventory: ["ADMIN", "BUYER", "PRODUCTION_PLANNER", "OPERATIONS_ANALYST", "QUALITY_SPECIALIST"],
+  "purchase-orders": ["ADMIN", "BUYER", "OPERATIONS_ANALYST", "ACCOUNTS_PAYABLE"],
+  suppliers: ["ADMIN", "BUYER", "OPERATIONS_ANALYST"],
+  inventory: ["ADMIN", "BUYER", "PRODUCTION_PLANNER", "OPERATIONS_ANALYST"],
   quality: ["ADMIN", "QUALITY_SPECIALIST", "OPERATIONS_ANALYST"],
-  shipping: ["ADMIN", "SALES_COORDINATOR", "OPERATIONS_ANALYST"],
-  invoices: ["ADMIN", "ACCOUNTS_PAYABLE", "BUYER", "OPERATIONS_ANALYST"],
+  shipping: ["ADMIN", "OPERATIONS_ANALYST"],
+  invoices: ["ADMIN", "ACCOUNTS_PAYABLE", "OPERATIONS_ANALYST"],
   queues: ["ADMIN", "SALES_COORDINATOR", "BUYER", "PRODUCTION_PLANNER", "OPERATIONS_ANALYST", "ACCOUNTS_PAYABLE", "QUALITY_SPECIALIST"],
   reports: ["ADMIN", "SALES_COORDINATOR", "BUYER", "PRODUCTION_PLANNER", "OPERATIONS_ANALYST", "ACCOUNTS_PAYABLE", "QUALITY_SPECIALIST"],
   "audit-log": ["ADMIN", "SALES_COORDINATOR", "BUYER", "PRODUCTION_PLANNER", "OPERATIONS_ANALYST", "ACCOUNTS_PAYABLE", "QUALITY_SPECIALIST"],
@@ -54,19 +56,48 @@ export function canViewNorthstarModule(user: Pick<NorthstarUser, "role">, module
 const RECORD_MODULE: Record<string, string> = {
   CUSTOMER: "customers", RFQ: "rfqs", QUOTE: "quotes", SALES_ORDER: "sales-orders",
   WORK_ORDER: "work-orders", PURCHASE_ORDER: "purchase-orders", SUPPLIER: "suppliers",
+  PURCHASE_REQUISITION: "purchase-orders",
   ITEM: "inventory", MATERIAL: "inventory", INVENTORY_BALANCE: "inventory",
   SHORTAGE: "material-shortages", EXCEPTION: "production-exceptions", QUALITY_HOLD: "quality",
+  QUALITY_INSPECTION: "quality", NONCONFORMANCE: "quality",
   INVOICE: "invoices", RTV: "quality",
 };
 
-export function canViewNorthstarRecord(user: Pick<NorthstarUser, "role">, recordType: string) {
-  const module = RECORD_MODULE[recordType];
-  return Boolean(module && canViewNorthstarModule(user, module));
+export function moduleForNorthstarRecordType(recordType: string) {
+  return RECORD_MODULE[recordType] || null;
+}
+
+export function visibleNorthstarRecordTypes(user: Pick<NorthstarUser, "role">) {
+  return Object.keys(RECORD_MODULE).filter((recordType) =>
+    canViewNorthstarRecord(user, recordType),
+  );
+}
+
+function hasPlannerApprovalScope(data: unknown) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  const values = data as Record<string, unknown>;
+  const requirements = Array.isArray(values.approvalRequirements)
+    ? values.approvalRequirements.map(String)
+    : String(values.approval || "").split(",").filter(Boolean);
+  return requirements.includes("PRODUCTION_PLANNER");
+}
+
+export function canViewNorthstarRecord(
+  user: Pick<NorthstarUser, "role">,
+  recordType: string,
+  data?: unknown,
+) {
+  if (user.role === "PRODUCTION_PLANNER" && recordType === "QUOTE") {
+    return hasPlannerApprovalScope(data);
+  }
+  const moduleName = RECORD_MODULE[recordType];
+  return Boolean(moduleName && canViewNorthstarModule(user, moduleName));
 }
 
 type RecordForAuthorization = {
   type: string;
   status: string;
+  data?: unknown;
 };
 
 type ActionRule = {
@@ -79,11 +110,6 @@ const ADMIN = ["ADMIN"] as const satisfies readonly NorthstarRole[];
 const SALES = ["ADMIN", "SALES_COORDINATOR"] as const satisfies readonly NorthstarRole[];
 const PURCHASING = ["ADMIN", "BUYER"] as const satisfies readonly NorthstarRole[];
 const PLANNING = ["ADMIN", "PRODUCTION_PLANNER"] as const satisfies readonly NorthstarRole[];
-const PLANNING_AND_BUYING = [
-  "ADMIN",
-  "PRODUCTION_PLANNER",
-  "BUYER",
-] as const satisfies readonly NorthstarRole[];
 const OPERATIONS = [
   "ADMIN",
   "OPERATIONS_ANALYST",
@@ -112,6 +138,7 @@ const ACTION_RULES: Record<NorthstarRecordAction, readonly ActionRule[]> = {
   createQuote: [{ recordType: "RFQ", roles: SALES, statuses: RFQ_COSTING }],
   submitApproval: [{ recordType: "QUOTE", roles: SALES, statuses: QUOTE_DRAFT }],
   approve: [{ recordType: "QUOTE", roles: ADMIN, statuses: ["AWAITING_APPROVAL"] }],
+  plannerApprove: [{ recordType: "QUOTE", roles: PLANNING, statuses: ["AWAITING_APPROVAL"] }],
   submitQuote: [{ recordType: "QUOTE", roles: SALES, statuses: ["APPROVED"] }],
   supplierFollowup: [{ recordType: "PURCHASE_ORDER", roles: PURCHASING, statuses: PO_OPEN }],
   confirmPO: [{ recordType: "PURCHASE_ORDER", roles: PURCHASING, statuses: PO_OPEN }],
@@ -121,7 +148,7 @@ const ACTION_RULES: Record<NorthstarRecordAction, readonly ActionRule[]> = {
       roles: PURCHASING,
       statuses: [...PO_OPEN, "CONFIRMED"],
     },
-    { recordType: "SHORTAGE", roles: PLANNING_AND_BUYING, statuses: SHORTAGE_OPEN },
+    { recordType: "SHORTAGE", roles: OPERATIONS, statuses: SHORTAGE_OPEN },
     { recordType: "EXCEPTION", roles: OPERATIONS, statuses: EXCEPTION_OPEN },
     { recordType: "INVOICE", roles: FINANCE, statuses: INVOICE_REVIEW },
   ],
@@ -129,7 +156,7 @@ const ACTION_RULES: Record<NorthstarRecordAction, readonly ActionRule[]> = {
     { recordType: "RFQ", roles: SALES, statuses: "*" },
     { recordType: "QUOTE", roles: SALES, statuses: "*" },
     { recordType: "PURCHASE_ORDER", roles: PURCHASING, statuses: "*" },
-    { recordType: "SHORTAGE", roles: PLANNING_AND_BUYING, statuses: "*" },
+    { recordType: "SHORTAGE", roles: OPERATIONS, statuses: "*" },
     { recordType: "EXCEPTION", roles: OPERATIONS, statuses: "*" },
     { recordType: "INVOICE", roles: FINANCE, statuses: "*" },
   ],
@@ -176,6 +203,14 @@ export function authorizeNorthstarRecordAction(
   actionValue: unknown,
   record: RecordForAuthorization,
 ): AuthorizationResult {
+  if (!canViewNorthstarRecord(user, record.type, record.data)) {
+    return {
+      allowed: false,
+      status: 403,
+      code: "ROLE_FORBIDDEN",
+      message: "Your role is not authorized for this record.",
+    };
+  }
   if (!isNorthstarRecordAction(actionValue)) {
     return {
       allowed: false,

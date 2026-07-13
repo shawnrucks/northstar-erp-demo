@@ -10,7 +10,8 @@ Northstar is a functional manufacturing ERP demonstration for browser-driven adm
 - Server-enforced module, record, action, role, and state-transition authorization
 - Transactional workflow mutations and audit events
 - Server-generated daily-operations PDF reports
-- Vitest integration tests and Playwright E2E tests for workflows A–F
+- Controlled, audited demo reseeding with canonical database templates
+- Vitest integration tests and Playwright E2E tests for workflows A–F, role isolation, and reseeding
 
 ## Local development
 
@@ -36,7 +37,7 @@ npm run db:migrate:postgres
 npm run db:seed:postgres
 ```
 
-The migration runner uses checksums, transactions, and an advisory lock. The seed is idempotent. A destructive PostgreSQL reset requires both the explicit reset command and `ALLOW_DEMO_RESET=1`.
+The migration runner uses checksums, transactions, and an advisory lock. The seed is idempotent and refreshes canonical reset templates. A CLI PostgreSQL reset requires both the explicit reset command and `ALLOW_DEMO_RESET=1`. The Administration UI uses a separate operator token, typed confirmation, cooldown, idempotency, locking, session revocation, and durable audit evidence.
 
 See [db/README.md](db/README.md) for migration and Render details.
 
@@ -85,6 +86,7 @@ All seeded accounts use `Demo123!` locally. Set `NORTHSTAR_DEMO_PASSWORD` before
 - `/erp/invoices/INV-SUM-8821` — three-way match exception
 - `/erp/reports/daily-operations` — report creation and PDF export
 - `/erp/audit-log` — operational audit history
+- `/erp/admin` — administration reference and controlled demo reset
 
 ## Production deployment
 
@@ -101,10 +103,12 @@ Required production variables:
 DATABASE_URL=<Render PostgreSQL private connection string>
 NORTHSTAR_DEMO_PASSWORD=<demo password>
 NORTHSTAR_DEMO_DATE=<YYYY-MM-DD>
+NORTHSTAR_OPERATOR_RESET_TOKEN=<owner-only random token, at least 24 characters>
+NORTHSTAR_DEMO_RESET_COOLDOWN_SECONDS=300
 NODE_ENV=production
 HOSTNAME=0.0.0.0
 ```
 
 ## Scope and limitations
 
-This is a demonstration ERP, not a general ledger, payroll system, advanced MRP system, EDI gateway, payment processor, machine-control system, or CAD application. Communications simulate sending and preserve message history; they do not deliver external email. Operational actions require explicit user interaction and never resolve themselves automatically.
+This is a demonstration ERP, not a general ledger, payroll system, advanced MRP system, EDI gateway, payment processor, machine-control system, or CAD application. The six connected showcase workflows are the deepest paths; planning, shipping, quality inspections/nonconformances, purchase requisitions, document management, task lifecycle, bulk queues, and editable administration remain intentionally limited. Communications simulate sending and preserve message history; they do not deliver external email. Operational actions require explicit user interaction and never resolve themselves automatically.

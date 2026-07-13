@@ -201,6 +201,44 @@ export async function createNorthstarSession(
 
   await northstarRepository.transaction(async (transaction) => {
     if (transaction.provider === "postgres") {
+      await transaction.run("SELECT pg_advisory_xact_lock_shared(hashtext($1))", [
+        "northstar_demo_data_v1",
+      ]);
+    }
+    const resetState = await transaction.get<{ reset_in_progress: boolean | number }>(
+      northstarSql({
+        postgres: "SELECT reset_in_progress FROM demo_state WHERE singleton = true",
+        sqlite: "SELECT reset_in_progress FROM demo_state WHERE singleton = 1",
+      }),
+    );
+    if (resetState?.reset_in_progress === true || Number(resetState?.reset_in_progress) === 1) {
+      throw new Error("Demo reset in progress.");
+    }
+    const currentCredential = await transaction.get<{
+      password_hash: string;
+      credential_version: number | string | null;
+    }>(
+      northstarSql({
+        postgres: `SELECT password_hash, credential_version
+                     FROM users
+                    WHERE id = $1 AND lower(email) = lower($2) AND active = true`,
+        sqlite: `SELECT password_hash, NULL AS credential_version
+                   FROM users
+                  WHERE id = ? AND email = ?`,
+      }),
+      [user.id, user.email],
+    );
+    const currentVersion = currentCredential?.credential_version == null
+      ? currentCredential && sha256(currentCredential.password_hash)
+      : String(currentCredential.credential_version);
+    if (
+      !currentCredential ||
+      currentCredential.password_hash !== user.password_hash ||
+      String(credentialVersion) !== String(currentVersion)
+    ) {
+      throw new Error("The account changed while the session was being created.");
+    }
+    if (transaction.provider === "postgres") {
       await transaction.run(
         `DELETE FROM northstar_sessions
           WHERE expires_at <= now()

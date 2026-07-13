@@ -21,6 +21,8 @@ DATABASE_URL='postgresql://…' npm run db:migrate:postgres
 DATABASE_URL='postgresql://…' npm run db:seed:postgres
 ```
 
-`NORTHSTAR_DEMO_DATE=YYYY-MM-DD` pins relative due dates. `NORTHSTAR_DEMO_PASSWORD` overrides the public demo password. A destructive reset requires both `--reset` and `ALLOW_DEMO_RESET=1`.
+`NORTHSTAR_DEMO_DATE=YYYY-MM-DD` pins relative due dates. `NORTHSTAR_DEMO_PASSWORD` overrides the public demo password. The web reset requires an administrator session, the exact typed confirmation phrase, and a separate 24+ character `NORTHSTAR_OPERATOR_RESET_TOKEN`; keep that token only in the deployment environment. `NORTHSTAR_DEMO_RESET_COOLDOWN_SECONDS` controls the reset cooldown. The CLI reset still requires both `--reset` and `ALLOW_DEMO_RESET=1`.
+
+The reset restores canonical template rows inside a locked database transaction, revokes all sessions, and clears mutable reports, tasks, notes, and communications. Reset-run evidence and the append-only audit history are intentionally retained.
 
 `render.yaml` runs the migration and idempotent seed as the web service's pre-deploy command, then verifies `/api/health` before routing traffic. Its `DATABASE_URL` references the Render PostgreSQL private connection string. The database is not exposed to the public internet.
