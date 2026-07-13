@@ -14,44 +14,51 @@ type ResetStatus = {
   lastResetAt: string | null;
   lastResetBy: string | null;
   cooldownRemainingSeconds: number;
-  confirmationPhrase: string;
-  operatorTokenRequired: boolean;
-  operatorTokenConfigured: boolean;
 };
 
 export default function DemoResetPanel() {
   const [status, setStatus] = useState<ResetStatus | null>(null);
-  const [confirmation, setConfirmation] = useState("");
-  const [operatorToken, setOperatorToken] = useState("");
   const [message, setMessage] = useState("Loading reset status…");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     let active = true;
-    fetch("/api/northstar/admin/reset", { cache: "no-store" })
-      .then(async (response) => {
-        const result = await response.json();
-        if (!response.ok) throw new Error(result.error || "Reset status is unavailable.");
-        if (!active) return;
-        setStatus(result);
-        setMessage(
-          result.available
-            ? "Ready"
-            : result.operatorTokenConfigured === false
-              ? "The owner reset token is not configured in this environment."
-              : "Canonical reset data is unavailable.",
-        );
-      })
-      .catch((error) => {
-        if (active) setMessage(error instanceof Error ? error.message : "Reset status is unavailable.");
-      });
+    const refresh = () => {
+      fetch("/api/northstar/admin/reset", { cache: "no-store" })
+        .then(async (response) => {
+          const result = await response.json();
+          if (!response.ok) throw new Error(result.error || "Reset status is unavailable.");
+          if (!active) return;
+          setStatus(result);
+          setMessage(result.available ? "Ready" : "Canonical reset data is unavailable.");
+        })
+        .catch((error) => {
+          if (active) setMessage(error instanceof Error ? error.message : "Reset status is unavailable.");
+        });
+    };
+    refresh();
+    const refreshTimer = window.setInterval(refresh, 10_000);
     return () => {
       active = false;
+      window.clearInterval(refreshTimer);
     };
   }, []);
 
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setStatus((current) => {
+        if (!current || current.cooldownRemainingSeconds <= 0) return current;
+        return {
+          ...current,
+          cooldownRemainingSeconds: current.cooldownRemainingSeconds - 1,
+        };
+      });
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   async function resetDemo() {
-    if (!status || confirmation !== status.confirmationPhrase) return;
+    if (!status?.available) return;
     setBusy(true);
     setMessage("Restoring canonical records, queues, and workflow data…");
     try {
@@ -61,7 +68,7 @@ export default function DemoResetPanel() {
           "content-type": "application/json",
           "idempotency-key": crypto.randomUUID(),
         },
-        body: JSON.stringify({ confirmation, operatorToken }),
+        body: JSON.stringify({}),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "The demo could not be reset.");
@@ -77,9 +84,7 @@ export default function DemoResetPanel() {
     busy ||
     !status?.available ||
     Boolean(status?.resetInProgress) ||
-    (status?.cooldownRemainingSeconds || 0) > 0 ||
-    confirmation !== status?.confirmationPhrase ||
-    (Boolean(status?.operatorTokenRequired) && !operatorToken);
+    (status?.cooldownRemainingSeconds || 0) > 0;
 
   return (
     <section className="ns-panel ns-demo-reset" aria-labelledby="demo-reset-title">
@@ -94,6 +99,7 @@ export default function DemoResetPanel() {
           Restore the canonical Northstar scenario, including all 2,090 records,
           queues, reports, tasks, notes, and communications. Existing sessions are
           revoked. The append-only audit history and reset evidence are retained.
+          This administrator-only action runs immediately and signs everyone out.
         </p>
         {status && (
           <dl className="ns-reset-status">
@@ -103,27 +109,6 @@ export default function DemoResetPanel() {
             <div><dt>Last reset</dt><dd>{status.lastResetAt ? new Date(status.lastResetAt).toLocaleString() : "Not yet reset"}</dd></div>
           </dl>
         )}
-        {status?.operatorTokenRequired && (
-          <label>
-            Operator reset token
-            <input
-              autoComplete="off"
-              disabled={busy}
-              onChange={(event) => setOperatorToken(event.target.value)}
-              type="password"
-              value={operatorToken}
-            />
-          </label>
-        )}
-        <label>
-          Type <b>{status?.confirmationPhrase || "RESET NORTHSTAR DEMO"}</b> to confirm
-          <input
-            autoComplete="off"
-            disabled={busy}
-            onChange={(event) => setConfirmation(event.target.value)}
-            value={confirmation}
-          />
-        </label>
         {status && status.cooldownRemainingSeconds > 0 && (
           <p className="ns-reset-cooldown">
             Reset cooldown active for approximately {Math.ceil(status.cooldownRemainingSeconds / 60)} minute(s).

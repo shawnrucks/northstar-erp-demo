@@ -37,7 +37,7 @@ npm run db:migrate:postgres
 npm run db:seed:postgres
 ```
 
-The migration runner uses checksums, transactions, and an advisory lock. The seed is idempotent and refreshes canonical reset templates. A CLI PostgreSQL reset requires both the explicit reset command and `ALLOW_DEMO_RESET=1`. The Administration UI uses a separate operator token, typed confirmation, cooldown, idempotency, locking, session revocation, and durable audit evidence.
+The migration runner uses checksums, transactions, and an advisory lock. The seed is idempotent and refreshes canonical reset templates. A CLI PostgreSQL reset requires both the explicit reset command and `ALLOW_DEMO_RESET=1`. The Administration UI provides an authenticated Admin-only one-click reset with cooldown, idempotency, locking, session revocation, and durable audit evidence.
 
 See [db/README.md](db/README.md) for migration and Render details.
 
@@ -60,7 +60,9 @@ The browser suite exercises authentication, route protection, and all connected 
 
 ## Demo accounts
 
-All seeded accounts use `Demo123!` locally. Set `NORTHSTAR_DEMO_PASSWORD` before production seeding to override it.
+All seeded accounts use `Demo123!` locally. In a shared deployment, set
+`NORTHSTAR_ADMIN_PASSWORD` to keep the administrator account owner-only while
+`NORTHSTAR_DEMO_PASSWORD` continues to control the public non-admin accounts.
 
 | Role | Email |
 |---|---|
@@ -102,8 +104,8 @@ Required production variables:
 ```text
 DATABASE_URL=<Render PostgreSQL private connection string>
 NORTHSTAR_DEMO_PASSWORD=<demo password>
+NORTHSTAR_ADMIN_PASSWORD=<owner-only administrator password>
 NORTHSTAR_DEMO_DATE=<YYYY-MM-DD>
-NORTHSTAR_OPERATOR_RESET_TOKEN=<owner-only random token, at least 24 characters>
 NORTHSTAR_DEMO_RESET_COOLDOWN_SECONDS=300
 NODE_ENV=production
 HOSTNAME=0.0.0.0

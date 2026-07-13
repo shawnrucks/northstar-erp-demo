@@ -12,7 +12,11 @@ mkdirSync(testRoot, { recursive: true });
 execFileSync(
   process.execPath,
   [path.join(projectRoot, "scripts/northstar-setup.mjs")],
-  { cwd: testRoot, stdio: "inherit" },
+  {
+    cwd: testRoot,
+    env: { ...process.env, NORTHSTAR_ADMIN_PASSWORD: "Demo123!" },
+    stdio: "inherit",
+  },
 );
 
 const nextBin = path.join(projectRoot, "node_modules/next/dist/bin/next");
@@ -20,6 +24,7 @@ const server = spawn(process.execPath, [nextBin, "dev", "--webpack", "-p", port]
   cwd: projectRoot,
   env: {
     ...process.env,
+    NORTHSTAR_ADMIN_PASSWORD: "Demo123!",
     NORTHSTAR_DATABASE_PATH: databasePath,
     NORTHSTAR_NEXT_DIST_DIR: ".next-e2e",
   },

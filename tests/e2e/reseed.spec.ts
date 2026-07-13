@@ -10,9 +10,8 @@ test("administrator can restore canonical demo data from the UI", async ({ page 
 
   await expect(page.getByRole("heading", { name: "Reset demo data" })).toBeVisible();
   await expect(page.getByText("2,090", { exact: true })).toBeVisible();
-  await page.getByLabel("Operator reset token").fill("northstar-e2e-reset-token-2026");
-  const confirmation = page.locator(".ns-demo-reset-body label").last().locator("input");
-  await confirmation.fill("RESET NORTHSTAR DEMO");
+  await expect(page.getByLabel("Operator reset token")).toHaveCount(0);
+  await expect(page.getByText("RESET NORTHSTAR DEMO", { exact: true })).toHaveCount(0);
 
   const reset = page.getByTestId("northstar-demo-reset-button");
   await expect(reset).toBeEnabled();

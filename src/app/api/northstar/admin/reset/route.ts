@@ -2,10 +2,7 @@ import { NextResponse } from "next/server";
 
 import {
   getNorthstarDemoResetStatus,
-  NORTHSTAR_DEMO_RESET_CONFIRMATION,
   NorthstarDemoResetError,
-  northstarOperatorResetConfigured,
-  northstarOperatorResetTokenState,
   resetNorthstarDemo,
 } from "@/lib/northstar-demo-reset";
 import {
@@ -42,17 +39,7 @@ export async function GET(request: Request) {
 
   try {
     const status = await getNorthstarDemoResetStatus();
-    const operatorTokenRequired =
-      process.env.NODE_ENV === "production" ||
-      Boolean(process.env.NORTHSTAR_OPERATOR_RESET_TOKEN?.trim());
-    const operatorTokenConfigured = northstarOperatorResetConfigured();
-    return json({
-      ...status,
-      available: status.available && operatorTokenConfigured,
-      confirmationPhrase: NORTHSTAR_DEMO_RESET_CONFIRMATION,
-      operatorTokenRequired,
-      operatorTokenConfigured,
-    });
+    return json(status);
   } catch {
     return json({ error: "Demo reset status is temporarily unavailable." }, 503);
   }
@@ -75,19 +62,6 @@ export async function POST(request: Request) {
     body = parsed as Record<string, unknown>;
   } catch {
     return json({ error: "The request body is not valid JSON." }, 400);
-  }
-
-  if (body.confirmation !== NORTHSTAR_DEMO_RESET_CONFIRMATION) {
-    return json({ error: "The reset confirmation phrase does not match." }, 400);
-  }
-
-  const token = request.headers.get("x-northstar-operator-token") || body.operatorToken;
-  const tokenState = northstarOperatorResetTokenState(token);
-  if (tokenState === "unavailable") {
-    return json({ error: "Demo reset is not configured for this environment." }, 503);
-  }
-  if (tokenState === "rejected") {
-    return json({ error: "Reset authorization was not accepted." }, 403);
   }
 
   const idempotencyKey = request.headers.get("idempotency-key") || body.idempotencyKey;

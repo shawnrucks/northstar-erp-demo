@@ -15,6 +15,7 @@ export default function setup() {
       cwd: testRoot,
       env: {
         ...process.env,
+        NORTHSTAR_ADMIN_PASSWORD: "Demo123!",
         NORTHSTAR_DATABASE_PATH: path.join(testRoot, "data/northstar.sqlite3"),
       },
       stdio: "ignore",

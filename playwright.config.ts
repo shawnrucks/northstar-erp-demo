@@ -36,7 +36,6 @@ export default defineConfig({
         stderr: "pipe",
         env: {
           NORTHSTAR_E2E_PORT: String(port),
-          NORTHSTAR_OPERATOR_RESET_TOKEN: "northstar-e2e-reset-token-2026",
         },
       },
 });

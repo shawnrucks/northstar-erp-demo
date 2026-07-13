@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import { POST as login } from "@/app/api/northstar/login/route";
 import { POST as takeAction } from "@/app/api/northstar/action/route";
@@ -8,9 +8,6 @@ import {
   POST as resetDemo,
 } from "@/app/api/northstar/admin/reset/route";
 import { nsdb } from "@/lib/northstar";
-
-const OPERATOR_TOKEN = "northstar-reset-integration-token-2026";
-const previousOperatorToken = process.env.NORTHSTAR_OPERATOR_RESET_TOKEN;
 
 function request(
   url: string,
@@ -50,9 +47,7 @@ function resetRequest(cookie: string, overrides: Record<string, unknown> = {}) {
     request(
       "http://northstar.test/api/northstar/admin/reset",
       {
-        confirmation: "RESET NORTHSTAR DEMO",
         idempotencyKey: "integration-reset-0001",
-        operatorToken: OPERATOR_TOKEN,
         ...overrides,
       },
       cookie,
@@ -61,10 +56,6 @@ function resetRequest(cookie: string, overrides: Record<string, unknown> = {}) {
 }
 
 describe("controlled demo reset", () => {
-  beforeAll(() => {
-    process.env.NORTHSTAR_OPERATOR_RESET_TOKEN = OPERATOR_TOKEN;
-  });
-
   afterEach(() => {
     nsdb.prepare("DELETE FROM demo_reset_runs").run();
     nsdb.prepare(`UPDATE demo_state
@@ -75,27 +66,64 @@ describe("controlled demo reset", () => {
     nsdb.prepare("DELETE FROM northstar_sessions").run();
   });
 
-  afterAll(() => {
-    if (previousOperatorToken === undefined) {
-      delete process.env.NORTHSTAR_OPERATOR_RESET_TOKEN;
-    } else {
-      process.env.NORTHSTAR_OPERATOR_RESET_TOKEN = previousOperatorToken;
-    }
-  });
-
-  it("requires an administrator, exact confirmation, and the separate operator token", async () => {
+  it("requires an authenticated administrator and a protected request context", async () => {
+    expect(
+      (
+        await resetStatus(
+          new Request("http://northstar.test/api/northstar/admin/reset"),
+        )
+      ).status,
+    ).toBe(401);
     expect((await resetRequest("", {})).status).toBe(401);
 
     const buyerCookie = await loginAs("buyer@northstar-demo.com");
+    expect(
+      (
+        await resetStatus(
+          new Request("http://northstar.test/api/northstar/admin/reset", {
+            headers: { cookie: buyerCookie },
+          }),
+        )
+      ).status,
+    ).toBe(403);
     expect((await resetRequest(buyerCookie)).status).toBe(403);
 
     const adminCookie = await loginAs("admin@northstar-demo.com");
+    const crossOrigin = new Request(
+      "http://northstar.test/api/northstar/admin/reset",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          cookie: adminCookie,
+          origin: "https://untrusted.example",
+          "idempotency-key": "integration-reset-cross-origin",
+        },
+        body: "{}",
+      },
+    );
+    expect((await resetDemo(crossOrigin)).status).toBe(403);
+
+    const nonJson = new Request(
+      "http://northstar.test/api/northstar/admin/reset",
+      {
+        method: "POST",
+        headers: {
+          cookie: adminCookie,
+          origin: "http://northstar.test",
+          "idempotency-key": "integration-reset-non-json",
+        },
+        body: "reset",
+      },
+    );
+    expect((await resetDemo(nonJson)).status).toBe(415);
     expect(
-      (await resetRequest(adminCookie, { confirmation: "reset northstar demo" })).status,
+      (
+        await resetDemo(
+          request("http://northstar.test/api/northstar/admin/reset", {}, adminCookie),
+        )
+      ).status,
     ).toBe(400);
-    expect(
-      (await resetRequest(adminCookie, { operatorToken: "incorrect-token" })).status,
-    ).toBe(403);
   });
 
   it("recovers an interrupted reset before rejecting reuse of its idempotency key", async () => {

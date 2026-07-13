@@ -1,4 +1,4 @@
-import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 
 import {
   northstarRepository,
@@ -7,7 +7,6 @@ import {
 } from "@/lib/northstar";
 import type { NorthstarUser } from "@/lib/northstar-auth";
 
-export const NORTHSTAR_DEMO_RESET_CONFIRMATION = "RESET NORTHSTAR DEMO";
 export const NORTHSTAR_DEMO_RESET_LOCK = "northstar_demo_data_v1";
 
 const EXPECTED_RECORD_COUNT = 2_090;
@@ -108,30 +107,6 @@ function retryAfter(value: string | Date | null | undefined) {
   const normalized = iso(value);
   if (!normalized) return 0;
   return Math.max(0, Math.ceil((Date.parse(normalized) - Date.now()) / 1_000));
-}
-
-function digest(value: string) {
-  return createHash("sha256").update(value).digest();
-}
-
-export function northstarOperatorResetTokenState(input: unknown) {
-  const configured = process.env.NORTHSTAR_OPERATOR_RESET_TOKEN?.trim() || "";
-  const required = process.env.NODE_ENV === "production" || configured.length > 0;
-  if (!required) return "accepted" as const;
-  if (configured.length < 24) return "unavailable" as const;
-  if (typeof input !== "string" || input.length === 0 || input.length > 512) {
-    return "rejected" as const;
-  }
-  return timingSafeEqual(digest(configured), digest(input))
-    ? ("accepted" as const)
-    : ("rejected" as const);
-}
-
-export function northstarOperatorResetConfigured() {
-  const configured = process.env.NORTHSTAR_OPERATOR_RESET_TOKEN?.trim() || "";
-  return process.env.NODE_ENV !== "production" && !configured
-    ? true
-    : configured.length >= 24;
 }
 
 async function stateRow(database: NorthstarQueryExecutor, lock = false) {

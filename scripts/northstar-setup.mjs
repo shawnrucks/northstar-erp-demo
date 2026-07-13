@@ -7,8 +7,12 @@ import Database from "better-sqlite3";
 const SEED_VERSION = 1;
 const EXPECTED_RECORD_COUNT = 2_090;
 const PASSWORD = process.env.NORTHSTAR_DEMO_PASSWORD || "Demo123!";
+const ADMIN_PASSWORD = process.env.NORTHSTAR_ADMIN_PASSWORD || PASSWORD;
 const seedDate = process.env.NORTHSTAR_DEMO_DATE || new Date().toISOString().slice(0, 10);
 
+if (process.env.NODE_ENV === "production" && ADMIN_PASSWORD === PASSWORD) {
+  throw new Error("NORTHSTAR_ADMIN_PASSWORD must be set to an owner-only value in production.");
+}
 if (!/^\d{4}-\d{2}-\d{2}$/.test(seedDate) || Number.isNaN(Date.parse(`${seedDate}T12:00:00Z`))) {
   throw new Error("NORTHSTAR_DEMO_DATE must be a valid YYYY-MM-DD date.");
 }
@@ -348,7 +352,12 @@ const populate = db.transaction(() => {
   const insertUserTemplate = db.prepare(`INSERT INTO northstar_demo_user_templates
     (email, name, role, password_hash) VALUES (?, ?, ?, ?)`);
   for (const [email, name, role] of people) {
-    insertUserTemplate.run(email, name, role, passwordHash(PASSWORD));
+    insertUserTemplate.run(
+      email,
+      name,
+      role,
+      passwordHash(role === "ADMIN" ? ADMIN_PASSWORD : PASSWORD),
+    );
   }
 
   const insertRecordTemplate = db.prepare(`INSERT INTO northstar_demo_record_templates

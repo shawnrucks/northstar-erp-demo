@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { scryptSync } from "node:crypto";
 import { mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 
@@ -10,12 +11,22 @@ const resetRoot = path.join(projectRoot, `.test-data/seed-reset-${process.pid}`)
 const setupScript = path.join(projectRoot, "scripts/northstar-setup.mjs");
 const databasePath = path.join(resetRoot, "data/northstar.sqlite3");
 
-function reset() {
+function reset(environment: Record<string, string> = {}) {
   execFileSync(process.execPath, [setupScript], {
     cwd: resetRoot,
-    env: { ...process.env, NORTHSTAR_DATABASE_PATH: databasePath },
+    env: {
+      ...process.env,
+      NORTHSTAR_ADMIN_PASSWORD: "Demo123!",
+      NORTHSTAR_DATABASE_PATH: databasePath,
+      ...environment,
+    },
     stdio: "ignore",
   });
+}
+
+function passwordMatches(password: string, stored: string) {
+  const [salt, digest] = stored.split(":");
+  return scryptSync(password, salt, 64).toString("hex") === digest;
 }
 
 describe("Northstar seed reset", () => {
@@ -76,5 +87,28 @@ describe("Northstar seed reset", () => {
         .get(),
     ).toBe(1);
     restored.close();
+  });
+
+  it("keeps the administrator password owner-only without changing public accounts", () => {
+    const ownerPassword = "OwnerOnly-Integration-Password-2026!";
+    reset({ NORTHSTAR_ADMIN_PASSWORD: ownerPassword });
+
+    const db = new Database(databasePath, { readonly: true });
+    for (const table of ["users", "northstar_demo_user_templates"]) {
+      const adminHash = db
+        .prepare(`SELECT password_hash FROM ${table} WHERE email='admin@northstar-demo.com'`)
+        .pluck()
+        .get() as string;
+      const buyerHash = db
+        .prepare(`SELECT password_hash FROM ${table} WHERE email='buyer@northstar-demo.com'`)
+        .pluck()
+        .get() as string;
+
+      expect(passwordMatches(ownerPassword, adminHash)).toBe(true);
+      expect(passwordMatches("Demo123!", adminHash)).toBe(false);
+      expect(passwordMatches("Demo123!", buyerHash)).toBe(true);
+    }
+    db.close();
+    reset();
   });
 });

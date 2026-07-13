@@ -4,8 +4,12 @@ import { createPostgresClient } from "./client.mjs";
 const SEED_VERSION = 1;
 const RESET = process.argv.includes("--reset");
 const PASSWORD = process.env.NORTHSTAR_DEMO_PASSWORD || "Demo123!";
+const ADMIN_PASSWORD = process.env.NORTHSTAR_ADMIN_PASSWORD || PASSWORD;
 const seedDate = process.env.NORTHSTAR_DEMO_DATE || new Date().toISOString().slice(0, 10);
 
+if (process.env.NODE_ENV === "production" && ADMIN_PASSWORD === PASSWORD) {
+  throw new Error("NORTHSTAR_ADMIN_PASSWORD must be set to an owner-only value in production.");
+}
 if (!/^\d{4}-\d{2}-\d{2}$/.test(seedDate) || Number.isNaN(Date.parse(`${seedDate}T12:00:00Z`))) {
   throw new Error("NORTHSTAR_DEMO_DATE must be a valid YYYY-MM-DD date.");
 }
@@ -105,7 +109,12 @@ async function populateCanonicalTemplates(client) {
   await client.query("DELETE FROM northstar_demo_record_templates");
   await client.query("DELETE FROM northstar_demo_user_templates");
 
-  const userValues = people.flatMap(([email, name, role]) => [email, name, role, passwordHash(PASSWORD)]);
+  const userValues = people.flatMap(([email, name, role]) => [
+    email,
+    name,
+    role,
+    passwordHash(role === "ADMIN" ? ADMIN_PASSWORD : PASSWORD),
+  ]);
   await client.query(
     `INSERT INTO northstar_demo_user_templates (email, name, role, password_hash)
      VALUES ${valuesSql(people.length, 4)}`,
